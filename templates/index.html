@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Timesheet</title>
+    <style>
+        .container {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+        .table-container, .graph-container {
+            flex: 1;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        th, td {
+            border: 1px solid #000;
+            padding: 8px;
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+   <h2>Upload Timesheet</h2>
+<form action="/process" method="post" enctype="multipart/form-data">
+    <label for="base_url">Jira Base URL:</label>
+    <input type="text" id="base_url" name="base_url" value="https://mahindra-adc.atlassian.net/browse/" required>
+    <br><br>
+    <input type="file" name="file" required>
+    <button type="submit">Process</button>
+</form>
+
+{% if processed %}
+<br>
+<a href="{{ url_for('download_file') }}">
+    <button>Download Detailed Timesheet</button>
+</a>
+<a href="{{ url_for('download_summary') }}">
+    <button>Download Summary Report</button>
+</a>
+{% endif %}
+
+
+<div class="container">
+    {% if category_totals %}
+    <div class="table-container">
+        <h3>Total Hours per Category</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th>Total Hours</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in category_totals %}
+                <tr>
+                    <td>{{ item['Category'] }}</td>
+                    <td>{{ item['Hours spent'] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if summary_data %}
+    <div class="table-container">
+        <h3>Summary Efforts Table</h3>
+        <table>
+            <thead>
+                <tr>
+                    {% for col in summary_data[0].keys() %}
+                        <th>{{ col }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in summary_data %}
+                    <tr>
+                        {% for val in row.values() %}
+                            <td>{{ val }}</td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+</body>
+</html>
