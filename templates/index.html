@@ -3,94 +3,219 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upload Timesheet</title>
+    <title>Jira Timesheet Processor</title>
     <style>
-        .container {
-            display: flex;
-            gap: 20px;
-            align-items: flex-start;
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            background-color: #f8f9fa;
+            color: #212529;
+            margin: 0;
+            padding: 20px;
         }
-        .table-container, .graph-container {
-            flex: 1;
+        .main-container {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 25px;
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+        }
+        h2, h3 {
+            color: #0056b3;
+            border-bottom: 2px solid #e9ecef;
+            padding-bottom: 10px;
+            margin-top: 0;
+        }
+        form div {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        input[type="text"], input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button, .button-link {
+            background-color: #007bff;
+            color: white !important;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.2s;
+            margin-right: 10px;
+            margin-top: 10px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        button:hover, .button-link:hover {
+            background-color: #0056b3;
+        }
+        .filter-form {
+            background-color: #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+        .filter-form .radio-group {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .filter-form label {
+            margin-right: 20px;
+            font-weight: normal;
+        }
+        .filter-form button {
+            background-color: #28a745;
+        }
+        .filter-form button:hover {
+            background-color: #218838;
+        }
+        .results-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 30px;
+            margin-top: 30px;
+        }
+        .table-container {
+            overflow-x: auto;
         }
         table {
             border-collapse: collapse;
             width: 100%;
+            margin-top: 15px;
         }
         th, td {
-            border: 1px solid #000;
-            padding: 8px;
+            border: 1px solid #dee2e6;
+            padding: 12px;
             text-align: left;
+        }
+        th {
+            background-color: #e9ecef;
+            font-weight: 600;
+        }
+        tbody tr:nth-child(odd) {
+            background-color: #f8f9fa;
         }
     </style>
 </head>
 <body>
-   <h2>Upload Timesheet</h2>
-<form action="/process" method="post" enctype="multipart/form-data">
-    <label for="base_url">Jira Base URL:</label>
-    <input type="text" id="base_url" name="base_url" value="https://mahindra-adc.atlassian.net/browse/" required>
-    <br><br>
-    <input type="file" name="file" required>
-    <button type="submit">Process</button>
-</form>
 
-{% if processed %}
-<br>
-<a href="{{ url_for('download_file') }}">
-    <button>Download Detailed Timesheet</button>
-</a>
-<a href="{{ url_for('download_summary') }}">
-    <button>Download Summary Report</button>
-</a>
-{% endif %}
-
-
-<div class="container">
-    {% if category_totals %}
-    <div class="table-container">
-        <h3>Total Hours per Category</h3>
-        <table>
-            <thead>
-                <tr>
-                    <th>Category</th>
-                    <th>Total Hours</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in category_totals %}
-                <tr>
-                    <td>{{ item['Category'] }}</td>
-                    <td>{{ item['Hours spent'] }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+<div class="main-container">
+    <h2>Upload Jira Timesheet</h2>
+    
+    <!-- Show upload form if no file has been processed yet -->
+    {% if not processed %}
+    <form action="{{ url_for('process_file_route') }}" method="post" enctype="multipart/form-data">
+        <div>
+            <label for="base_url">Jira Base URL:</label>
+            <input type="text" id="base_url" name="base_url" value="https://mahindra-adc.atlassian.net/browse/" required>
+        </div>
+        <div>
+            <label for="file">Select Timesheet File (CSV or Excel):</label>
+            <input type="file" id="file" name="file" required accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel">
+        </div>
+        <button type="submit">Process File</button>
+    </form>
     {% endif %}
 
-    {% if summary_data %}
-    <div class="table-container">
-        <h3>Summary Efforts Table</h3>
-        <table>
-            <thead>
-                <tr>
-                    {% for col in summary_data[0].keys() %}
-                        <th>{{ col }}</th>
-                    {% endfor %}
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in summary_data %}
+    <!-- Show results and filters if a file has been processed -->
+    {% if processed %}
+    <a href="{{ url_for('index') }}" class="button-link" style="background-color:#6c757d;">Upload New File</a>
+    <hr style="margin-top: 25px;">
+    
+    <!-- Author Filter Form -->
+    <form action="{{ url_for('results') }}" method="get" class="filter-form">
+        <h3>Filter Report by Author</h3>
+        <div class="radio-group">
+            <label>
+                <input type="radio" name="author" value="All" {% if selected_author == 'All' %}checked{% endif %}>
+                All
+            </label>
+            {% for author in authors %}
+            <label>
+                <input type="radio" name="author" value="{{ author }}" {% if selected_author == author %}checked{% endif %}>
+                {{ author }}
+            </label>
+            {% endfor %}
+            <!-- **FIX:** Added an explicit submit button for the filter -->
+            <button type="submit">Filter</button>
+        </div>
+    </form>
+
+    <div class="download-buttons">
+        <h3>Download Reports for: <span style="color: #dc3545;">{{ selected_author }}</span></h3>
+        <a href="{{ url_for('download_report', report_type='detailed', author=selected_author) }}" class="button-link">Download Detailed Timesheet</a>
+        <a href="{{ url_for('download_report', report_type='summary', author=selected_author) }}" class="button-link">Download Summary Report</a>
+        <a href="{{ url_for('download_report', report_type='sprint_closure', author=selected_author) }}" class="button-link">Download Sprint Closure Report</a>
+    </div>
+
+    <div class="results-container">
+        <div class="table-container">
+            <h3>Total Hours per Category</h3>
+            <table>
+                <thead>
                     <tr>
-                        {% for val in row.values() %}
-                            <td>{{ val }}</td>
-                        {% endfor %}
+                        <th>Category</th>
+                        <th>Total Hours</th>
                     </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                    {% for item in category_totals %}
+                    <tr>
+                        <td>{{ item['Category'] }}</td>
+                        <td>{{ "%.2f"|format(item['Hours spent']) }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="2">No data for this selection.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="table-container">
+            <h3>Summary Efforts Table</h3>
+            <table>
+                <thead>
+                    <tr>
+                        {% if summary_data %}
+                            {% for col in summary_data[0].keys() %}
+                                <th>{{ col }}</th>
+                            {% endfor %}
+                        {% else %}
+                            <th>Labels</th>
+                            <th>Issue Summary</th>
+                            <th>Author</th>
+                            <th>Status</th>
+                            <th>Total Efforts (hrs)</th>
+                        {% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in summary_data %}
+                        <tr>
+                            {% for val in row.values() %}
+                                <td>{{ val }}</td>
+                            {% endfor %}
+                        </tr>
+                    {% else %}
+                    <tr><td colspan="5">No data for this selection.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
     {% endif %}
 </div>
+
 </body>
 </html>
