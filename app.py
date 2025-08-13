@@ -227,7 +227,10 @@ def download_report(report_type):
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-if __name__ == '__main__':
-    local_ip = get_local_ip()
-    print(f" * Running on http://{local_ip}:5000")
-    app.run(host=local_ip, port=5000, debug=True)
+if __name__ == "__main__":
+    app.run(debug=True, host='0.0.0.0', port=5002)
+    
+# if __name__ == '__main__':
+#     local_ip = get_local_ip()
+#     print(f" * Running on http://{local_ip}:5000")
+#     app.run(host=local_ip, port=5000, debug=True)
