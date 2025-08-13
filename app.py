@@ -1,17 +1,19 @@
 import socket
 import pandas as pd
-import matplotlib.pyplot as plt
-import base64
 from io import BytesIO
 from flask import Flask, render_template, request, send_file, redirect, url_for
 
 app = Flask(__name__)
 
-processed_file = None
-summary_file = None
-original_filename = None
+# --- Global variables to hold the application's state ---
+global_df = None
+global_authors = []
+global_base_url = ""
+original_filename = "timesheet.xlsx"
+
 
 def get_local_ip():
+    """Gets the local IP address of the machine to display a clickable link."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("8.8.8.8", 80))
@@ -22,171 +24,210 @@ def get_local_ip():
         s.close()
     return local_ip
 
+# --- Data Processing Functions ---
 
 def process_timesheet(df, base_url):
-    df['Start Date'] = pd.to_datetime(df['Start Date']).dt.tz_localize(None)
-    df['Time'] = df['Start Date'].apply(lambda x: 'FullDay' if x.weekday() < 5 else 'Holiday')
-    df['Date'] = pd.to_datetime(df['Start Date']).dt.strftime('%d/%b/%Y')
+    """Processes data for the detailed timesheet view."""
+    if df.empty:
+        return pd.DataFrame(), pd.DataFrame()
 
+    df['Start Date'] = pd.to_datetime(df['Start Date']).dt.tz_localize(None)
+    df['Date'] = pd.to_datetime(df['Start Date']).dt.strftime('%d/%b/%Y')
     df['Application/Project Name'] = df['Project Name']
     df['Activity/Task Done'] = df['Comment']
     df['Category'] = df['Labels']
     df['Ticket/Task #'] = df['Issue Key'].apply(lambda x: f"{base_url}{x}")
-
-    df['Hours spent'] = df['Time Spent (seconds)'].apply(lambda x: round(x / 3600, 3))
+    df['Hours spent'] = df['Time Spent (seconds)'].apply(lambda x: round(x / 3600, 2))
     df['Start Time'] = df['Start Date'].dt.strftime('%I:%M %p')
     df['End Time'] = (df['Start Date'] + pd.to_timedelta(df['Time Spent (seconds)'], unit='s')).dt.strftime('%I:%M %p')
-
-    df['Remarks for any additional information'] = ""
     df['Status'] = df['Issue Status']
 
-    all_dates = pd.date_range(start=df['Start Date'].min(), end=df['Start Date'].max(), freq='D')
-    weekends = all_dates[all_dates.weekday >= 5]
-    worked_dates = df['Date'].unique()
-    weekends_without_work = weekends[~weekends.strftime('%d/%b/%Y').isin(worked_dates)]
-
-    weekend_df = pd.DataFrame({
-        'Time': 'Holiday',
-        'Date': weekends_without_work.strftime('%d/%b/%Y'),
-        'Application/Project Name': 'M&M Sustenance',
-        'Activity/Task Done': '',
-        'Hours spent': 0,
-        'Category': 'Weekend',
-        'Ticket/Task #': '',
-        'Start Time': '12:00 AM',
-        'End Time': '',
-        'Remarks for any additional information': '',
-        'Status': ''
-    })
-
-    output_df = pd.concat([df, weekend_df], ignore_index=True)
-    output_df['DateTime'] = pd.to_datetime(output_df['Date'] + ' ' + output_df['Start Time'],
-                                           format='%d/%b/%Y %I:%M %p', errors='coerce')
-
     output_columns = [
-        'Time', 'Date', 'Application/Project Name', 'Activity/Task Done', 'Hours spent',
-        'Category', 'Ticket/Task #', 'Start Time', 'End Time', 'Remarks for any additional information', 'Status'
+        'Date', 'Application/Project Name', 'Activity/Task Done', 'Hours spent',
+        'Category', 'Ticket/Task #', 'Start Time', 'End Time', 'Status'
     ]
-    output_df = output_df[output_columns + ['DateTime']]
-    output_df = output_df.sort_values(by='DateTime', ascending=True).drop(columns=['DateTime'])
-
+    output_df = df[output_columns]
     category_totals = df.groupby('Category')['Hours spent'].sum().reset_index()
-
-    return output_df, category_totals, df
-
+    return output_df, category_totals
 
 def process_summary(df):
+    """Generates a summary of time spent per task."""
+    if df.empty:
+        return pd.DataFrame()
     summary_df = df.groupby(
         ['Labels', 'Issue Summary', 'Author', 'Issue Status'],
         as_index=False
-    )['Time Spent (seconds)'].sum() 
- 
+    )['Time Spent (seconds)'].sum()
     summary_df['Total Efforts (hrs)'] = round(summary_df['Time Spent (seconds)'] / 3600, 2)
-    summary_df = summary_df.drop(columns=['Time Spent (seconds)'])
-    return summary_df
+    return summary_df[['Labels', 'Issue Summary', 'Author', 'Issue Status', 'Total Efforts (hrs)']]
 
+def process_sprint_closure_report(df):
+    """Generates the data for the Sprint Closure Report."""
+    if df.empty:
+        return BytesIO()
+        
+    df['Start Date'] = pd.to_datetime(df['Start Date'])
+    df['Hours Spent'] = df['Time Spent (seconds)'] / 3600
 
-def create_pie_chart(summary_df):
-    fig, ax = plt.subplots()
-    ax.pie(
-        summary_df['Total Efforts (hrs)'],
-        labels=summary_df['Issue Summary'],
-        autopct='%1.1f%%',
-        startangle=90
-    )
-    plt.tight_layout()
-    img = BytesIO()
-    plt.savefig(img, format='png')
-    img.seek(0)
-    plt.close(fig)
-    return base64.b64encode(img.getvalue()).decode('utf-8')
+    # 1. Available Capacity
+    weekdays_df = df[df['Start Date'].dt.weekday < 5].copy()
+    working_days = weekdays_df.groupby('Author')['Start Date'].apply(lambda s: s.dt.date.nunique()).reset_index()
+    working_days.columns = ['Team Member Name', 'Working Days']
+    working_days['Available Capacity (Hours)'] = working_days['Working Days'] * 8
 
-def format_hours(decimal_hours):
-    hours = int(decimal_hours)
-    minutes = int(round((decimal_hours - hours) * 60))
-    if hours > 0 and minutes > 0:
-        return f"{hours}h {minutes}m"
-    elif hours > 0:
-        return f"{hours}h"
-    else:
-        return f"{minutes}m"
+    # 2. Burned Capacity
+    burned_capacity = pd.pivot_table(
+        df, values='Hours Spent', index='Author', columns='Labels',
+        aggfunc='sum', fill_value=0
+    ).round(2)
+    if not burned_capacity.empty:
+        burned_capacity['Grand Total'] = burned_capacity.sum(axis=1)
+    burned_capacity.reset_index(inplace=True)
+    burned_capacity.rename(columns={'Author': 'Developer'}, inplace=True)
 
+    # 3. Features and Tech Debt
+    features_df = df[['Labels', 'Issue Summary', 'Issue Status', 'Author']].copy().drop_duplicates()
+    features_df.rename(columns={'Labels': 'Category', 'Issue Status': 'Status', 'Author': 'Done By'}, inplace=True)
+    features_df = features_df[['Category', 'Issue Summary', 'Status', 'Done By']]
+    features_df.reset_index(drop=True, inplace=True)
+    features_df.insert(0, 'Number', features_df.index + 1)
+
+    # Write to an in-memory Excel file
+    output_io = BytesIO()
+    with pd.ExcelWriter(output_io, engine='xlsxwriter') as writer:
+        workbook = writer.book
+        worksheet = workbook.add_worksheet('Sprint Closure Report')
+        header_format = workbook.add_format({'bold': True, 'font_size': 14, 'align': 'center', 'valign': 'vcenter'})
+        table_header_format = workbook.add_format({'bold': True, 'bg_color': '#DDEBF7', 'border': 1, 'text_wrap': True})
+        worksheet.merge_range('A1:L1', 'Sprint Closure Report', header_format)
+        
+        if not working_days.empty:
+            working_days.to_excel(writer, sheet_name='Sprint Closure Report', startrow=3, index=False)
+        if not burned_capacity.empty:
+            burned_capacity.to_excel(writer, sheet_name='Sprint Closure Report', startrow=3, startcol=4, index=False)
+        if not features_df.empty:
+            next_row = max(len(working_days), len(burned_capacity)) + 6
+            features_df.to_excel(writer, sheet_name='Sprint Closure Report', startrow=next_row, index=False)
+    output_io.seek(0)
+    return output_io
+
+# --- Flask Routes ---
 
 @app.route('/')
 def index():
-    return render_template('index.html')
-
+    """Renders the initial upload page."""
+    return render_template('index.html', processed=False)
 
 @app.route('/process', methods=['POST'])
-def process_file():
-    global processed_file, summary_file, original_filename
-
-    if 'file' not in request.files or 'base_url' not in request.form:
+def process_file_route():
+    """
+    Handles the file upload, cleans author names, stores data globally,
+    and redirects to the report view.
+    """
+    global global_df, global_authors, global_base_url, original_filename
+    if 'file' not in request.files or not request.form.get('base_url'):
         return "Missing file or base URL", 400
 
     file = request.files['file']
-    base_url = request.form['base_url']
-
     if file.filename == '':
         return "No selected file", 400
 
-    if file:
-        original_filename = file.filename
-        df = pd.read_excel(file, parse_dates=['Start Date'])
-        output_df, category_totals, raw_df = process_timesheet(df, base_url)
-        summary_df = process_summary(raw_df)
+    original_filename = file.filename
+    try:
+        if original_filename.lower().endswith('.csv'):
+            df = pd.read_csv(file)
+        else:
+            df = pd.read_excel(file)
+    except Exception as e:
+        return f"Error reading file: {e}", 400
+    
+    # **FIX:** Clean whitespace from author names to ensure accurate filtering.
+    if 'Author' in df.columns:
+        df['Author'] = df['Author'].str.strip()
 
-        processed_file = BytesIO()
-        with pd.ExcelWriter(processed_file, engine='xlsxwriter') as writer:
-            output_df.to_excel(writer, index=False, sheet_name='Detailed Timesheet')
-        processed_file.seek(0)
+    # Store data globally
+    global_df = df
+    global_authors = sorted(df['Author'].unique().tolist())
+    global_base_url = request.form['base_url']
+    
+    # Redirect to the report page
+    return redirect(url_for('results'))
 
-        summary_file = BytesIO()
-        with pd.ExcelWriter(summary_file, engine='xlsxwriter') as writer:
-            summary_df.to_excel(writer, index=False, sheet_name='Summary Report')
-        summary_file.seek(0)
+@app.route('/report')
+def results():
+    """
+    Displays the report page. It filters the global data based on the
+    'author' query parameter and generates the UI tables.
+    """
+    if global_df is None:
+        return redirect(url_for('index'))
 
-        # graph_base64 = create_pie_chart(summary_df)
+    selected_author = request.args.get('author', 'All')
 
-        
-        summary_display_df = summary_df.copy()
-        if 'Hours spent' in summary_display_df.columns:
-            summary_display_df['Hours spent'] = summary_display_df['Hours spent'].apply(format_hours)
-        
-        return render_template(
-            'index.html',
-            category_totals=category_totals.to_dict(orient='records'),
-            summary_data=summary_df.to_dict(orient='records'),
-            processed=True
-        )   
+    # Filter the main DataFrame based on selection
+    if selected_author == 'All':
+        display_df = global_df
+    else:
+        display_df = global_df[global_df['Author'] == selected_author].copy()
 
+    # Generate data for the UI tables
+    _, category_totals_df = process_timesheet(display_df.copy(), global_base_url)
+    summary_df_for_ui = process_summary(display_df.copy())
 
-@app.route('/download')
-def download_file():
-    if processed_file:
+    return render_template(
+        'index.html',
+        processed=True,
+        authors=global_authors,
+        selected_author=selected_author,
+        category_totals=category_totals_df.to_dict(orient='records'),
+        summary_data=summary_df_for_ui.to_dict(orient='records')
+    )
+
+@app.route('/download/<report_type>')
+def download_report(report_type):
+    """
+    Generates and serves a specific report file on demand.
+    The data is filtered based on the 'author' query parameter.
+    """
+    if global_df is None:
+        return redirect(url_for('index'))
+
+    selected_author = request.args.get('author', 'All')
+    print(selected_author)
+
+    # Filter the main DataFrame based on selection
+    if selected_author == 'All':
+        display_df = global_df
+    else:
+        display_df = global_df[global_df['Author'] == selected_author].copy()
+
+    # Generate the requested file
+    if report_type == 'detailed':
+        output_df, _ = process_timesheet(display_df, global_base_url)
+        file_io = BytesIO()
+        output_df.to_excel(file_io, index=False, sheet_name='Detailed Timesheet')
+        file_io.seek(0)
         download_name = original_filename.rsplit('.', 1)[0] + "_detailed.xlsx"
-        return send_file(
-            processed_file,
-            as_attachment=True,
-            download_name=download_name,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    return redirect(url_for('index'))
+    elif report_type == 'summary':
+        summary_df = process_summary(display_df)
+        file_io = BytesIO()
+        summary_df.to_excel(file_io, index=False, sheet_name='Summary Report')
+        file_io.seek(0)
+        download_name = "jira_summary.xlsx"
+    elif report_type == 'sprint_closure':
+        file_io = process_sprint_closure_report(display_df)
+        download_name = "sprint_closure_report.xlsx"
+    else:
+        return "Invalid report type", 404
 
-
-@app.route('/download_summary')
-def download_summary():
-    if summary_file:
-        return send_file(
-            summary_file,
-            as_attachment=True,
-            download_name="jira_summary.xlsx",
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    return redirect(url_for('index'))
-
+    return send_file(
+        file_io,
+        as_attachment=True,
+        download_name=download_name,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 if __name__ == '__main__':
     local_ip = get_local_ip()
-    print(f"Running on {local_ip}:5000")
+    print(f" * Running on http://{local_ip}:5000")
     app.run(host=local_ip, port=5000, debug=True)
