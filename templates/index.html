@@ -106,6 +106,11 @@
         tbody tr:nth-child(odd) {
             background-color: #f8f9fa;
         }
+        /* Style for completed tasks */
+        .status-done {
+            background-color: #d4edda !important;
+            color: #155724;
+        }
     </style>
 </head>
 <body>
@@ -147,7 +152,6 @@
                 {{ author }}
             </label>
             {% endfor %}
-            <!-- **FIX:** Added an explicit submit button for the filter -->
             <button type="submit">Filter</button>
         </div>
     </form>
@@ -201,15 +205,16 @@
                     </tr>
                 </thead>
                 <tbody>
+                   <!-- **FIX:** Conditionally add 'status-done' class to the row -->
                     {% for row in summary_data %}
-                        <tr>
-                            {% for val in row.values() %}
-                                <td>{{ val }}</td>
-                            {% endfor %}
-                        </tr>
-                    {% else %}
-                    <tr><td colspan="5">No data for this selection.</td></tr>
-                    {% endfor %}
+                    <tr class="{% if row['Issue Status'] and row['Issue Status']|string|lower|trim == 'done' %}status-done{% endif %}">
+                        {% for val in row.values() %}
+                            <td>{{ val }}</td>
+                        {% endfor %}
+                    </tr>
+                {% else %}
+                <tr><td colspan="5">No data for this selection.</td></tr>
+                {% endfor %}
                 </tbody>
             </table>
         </div>
