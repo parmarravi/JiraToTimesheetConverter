@@ -69,6 +69,11 @@ def process_sprint_closure_report(df):
     df['Start Date'] = pd.to_datetime(df['Start Date'])
     df['Hours Spent'] = df['Time Spent (seconds)'] / 3600
 
+   # Estimation
+    df['Original Estimate'] = df['Original Estimate (seconds)'] / 3600
+    df['Remaining Estimate'] = df['Remaining Estimate (seconds)'] / 3600
+
+
     # 1. Available Capacity
     weekdays_df = df[df['Start Date'].dt.weekday < 5].copy()
     working_days = weekdays_df.groupby('Author')['Start Date'].apply(lambda s: s.dt.date.nunique()).reset_index()
@@ -86,9 +91,9 @@ def process_sprint_closure_report(df):
     burned_capacity.rename(columns={'Author': 'Developer'}, inplace=True)
 
     # 3. Features and Tech Debt
-    features_df = df[['Labels', 'Issue Summary', 'Issue Status', 'Author']].copy().drop_duplicates()
+    features_df = df[['Labels', 'Issue Summary', 'Original Estimate', 'Remaining Estimate', 'Issue Status', 'Author']].copy().drop_duplicates()
     features_df.rename(columns={'Labels': 'Category', 'Issue Status': 'Status', 'Author': 'Done By'}, inplace=True)
-    features_df = features_df[['Category', 'Issue Summary', 'Status', 'Done By']]
+    features_df = features_df[['Category', 'Issue Summary', 'Original Estimate',  'Remaining Estimate', 'Status', 'Done By']]
     features_df.reset_index(drop=True, inplace=True)
     features_df.insert(0, 'Number', features_df.index + 1)
 
