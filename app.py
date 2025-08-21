@@ -92,10 +92,13 @@ def process_sprint_closure_report(df):
 
     # 3. Features and Tech Debt
     features_df = df[['Labels', 'Issue Summary', 'Original Estimate', 'Remaining Estimate', 'Issue Status', 'Author']].copy().drop_duplicates()
-    features_df.rename(columns={'Labels': 'Category', 'Issue Status': 'Status', 'Author': 'Done By'}, inplace=True)
-    features_df = features_df[['Category', 'Issue Summary', 'Original Estimate',  'Remaining Estimate', 'Status', 'Done By']]
+    features_df.rename(columns={'Labels': 'Type of Work', 'Issue Summary': 'Particular', 'Original Estimate':'Extimated efforts','Remaining Estimate':'Actual Effrots', 'Issue Status': 'Remark', 'Author': 'Resource Name'}, inplace=True)
+    features_df = features_df[['Type of Work', 'Particular', 'Resource Name', 'Extimated efforts',  'Actual Effrots', 'Remark']]
+       # ✅ Sort by Author (Resource Name) and then by Type of Work
+    features_df.sort_values(by=['Resource Name'], inplace=True)
     features_df.reset_index(drop=True, inplace=True)
-    features_df.insert(0, 'Number', features_df.index + 1)
+    features_df.insert(0, 'Sr Number', features_df.index + 1)
+
 
     # Write to an in-memory Excel file
     output_io = BytesIO()
