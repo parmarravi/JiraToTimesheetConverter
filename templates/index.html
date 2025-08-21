@@ -186,7 +186,57 @@
             </table>
         </div>
 
-        <div class="table-container">
+<div class="table-container">
+    <h3>Category vs Total Hours</h3>
+    <canvas id="categoryPieChart"></canvas>
+</div>
+
+<!-- Chart.js and Plugin -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+<script>
+    // Pass Jinja data to JavaScript
+    const categoryData = {{ category_totals|tojson }};
+    
+    const labels = categoryData.map(item => item["Category"]);
+    const hours = categoryData.map(item => item["Hours spent"]);
+    const totalHours = hours.reduce((a, b) => a + b, 0);
+
+    const ctx = document.getElementById('categoryPieChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'pie',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Total Hours',
+                data: hours,
+                backgroundColor: [
+                    '#007bff', '#28a745', '#ffc107', '#dc3545',
+                    '#17a2b8', '#6f42c1', '#20c997', '#fd7e14'
+                ],
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { position: 'right' },
+                datalabels: {
+                    color: '#fff',
+                    font: { weight: 'bold' },
+                    formatter: (value, ctx) => {
+                        let percentage = (value / totalHours * 100).toFixed(1) + "%";
+                        return percentage;
+                    }
+                }
+            }
+        },
+        plugins: [ChartDataLabels]
+    });
+</script>
+    </div>
+
+         <div class="table-container">
             <h3>Summary Efforts Table</h3>
             <table>
                 <thead>
@@ -218,7 +268,6 @@
                 </tbody>
             </table>
         </div>
-    </div>
     {% endif %}
 </div>
 
