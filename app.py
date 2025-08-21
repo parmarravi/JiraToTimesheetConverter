@@ -32,6 +32,7 @@ def process_timesheet(df, base_url):
         return pd.DataFrame(), pd.DataFrame()
 
     df['Start Date'] = pd.to_datetime(df['Start Date']).dt.tz_localize(None)
+    df['Time'] = df['Start Date'].apply(lambda x: 'FullDay' if x.weekday() < 5 else 'Holiday')
     df['Date'] = pd.to_datetime(df['Start Date']).dt.strftime('%d/%b/%Y')
     df['Application/Project Name'] = df['Project Name']
     df['Activity/Task Done'] = df['Comment']
@@ -41,14 +42,51 @@ def process_timesheet(df, base_url):
     df['Start Time'] = df['Start Date'].dt.strftime('%I:%M %p')
     df['End Time'] = (df['Start Date'] + pd.to_timedelta(df['Time Spent (seconds)'], unit='s')).dt.strftime('%I:%M %p')
     df['Status'] = df['Issue Status']
+    df['Remarks for any additional information'] = ""
+
+    all_dates = pd.date_range(start=df['Start Date'].min(), end=df['Start Date'].max(), freq='D')
+    weekends = all_dates[all_dates.weekday >= 5]
+    worked_dates = df['Date'].unique()
+    weekends_without_work = weekends[~weekends.strftime('%d/%b/%Y').isin(worked_dates)]
+
+    weekend_df = pd.DataFrame({
+        'Time': 'Holiday',
+        'Date': weekends_without_work.strftime('%d/%b/%Y'),
+        'Application/Project Name': '',
+        'Activity/Task Done': '',
+        'Hours spent': 0,
+        'Category': 'Weekend',
+        'Ticket/Task #': '',
+        'Start Time': '12:00 AM',
+        'End Time': '',
+        'Remarks for any additional information': '',
+        'Status': ''
+    })
+
+    output_df = pd.concat([df, weekend_df], ignore_index=True)
+    output_df['DateTime'] = pd.to_datetime(output_df['Date'] + ' ' + output_df['Start Time'],
+                                           format='%d/%b/%Y %I:%M %p', errors='coerce')
+
 
     output_columns = [
-        'Date', 'Application/Project Name', 'Activity/Task Done', 'Hours spent',
-        'Category', 'Ticket/Task #', 'Start Time', 'End Time', 'Status'
+        'Time', 'Date', 'Application/Project Name', 'Activity/Task Done', 'Hours spent',
+        'Category', 'Ticket/Task #', 'Start Time', 'End Time', 'Remarks for any additional information', 'Status'
     ]
-    output_df = df[output_columns]
+
+    output_df = output_df[output_columns + ['DateTime']]
+    output_df = output_df.sort_values(by='DateTime', ascending=True).drop(columns=['DateTime'])
+
     category_totals = df.groupby('Category')['Hours spent'].sum().reset_index()
-    return output_df, category_totals
+
+      # Apply yellow highlight if weekend
+    def highlight_weekends(row):
+        if row['Category'] == 'Weekend' or row['Time'] == 'Holiday':
+            return ['background-color: yellow'] * len(row)
+        return [''] * len(row)
+
+    styled_df = output_df.style.apply(highlight_weekends, axis=1)
+
+    return styled_df, category_totals
 
 def process_summary(df):
     """Generates a summary of time spent per task."""
