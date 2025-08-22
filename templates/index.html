@@ -139,7 +139,7 @@
     <hr style="margin-top: 25px;">
     
     <!-- Author Filter Form -->
-    <form action="{{ url_for('results') }}" method="get" class="filter-form">
+    <!-- <form action="{{ url_for('results') }}" method="get" class="filter-form">
         <h3>Filter Report by Author</h3>
         <div class="radio-group">
             <label>
@@ -154,13 +154,100 @@
             {% endfor %}
             <button type="submit">Filter</button>
         </div>
-    </form>
+    </form> -->
 
+    <!-- Author Filter Form -->
+<form action="{{ url_for('results') }}" method="get" class="filter-form">
+    <h3>Filter Report</h3>
+
+    <!-- Author filter -->
+    <div class="radio-group">
+        <h4>Select Author</h4>
+        <label>
+            <input type="radio" name="author" value="All" {% if selected_author == 'All' %}checked{% endif %}>
+            All
+        </label>
+        {% for author in authors %}
+        <label>
+            <input type="radio" name="author" value="{{ author }}" {% if selected_author == author %}checked{% endif %}>
+            {{ author }}
+        </label>
+        {% endfor %}
+    </div>
+
+    <!-- Category Type filter -->
+    <div class="radio-group" style="margin-top:15px;">
+        <h4>Select Category Type</h4>
+        <label>
+            <input type="radio" name="category_type" value="Activity" {% if selected_category == 'Activity' or not selected_category %}checked{% endif %} onchange="toggleCustomInput()">
+            Activity
+        </label>
+        <label>
+            <input type="radio" name="category_type" value="Label" {% if selected_category == 'Label' %}checked{% endif %} onchange="toggleCustomInput()">
+            Label
+        </label>
+        <label>
+            <input type="radio" name="category_type" value="Custom" {% if selected_category not in ['Activity', 'Label'] and selected_category %}checked{% endif %} onchange="toggleCustomInput()">
+            Custom Column:
+        </label>
+        <input type="text" name="custom_column" id="customColumnInput" placeholder="Enter column name" 
+               value="{% if selected_category not in ['Activity', 'Label'] %}{{ selected_category }}{% endif %}"
+               style="margin-left: 10px; padding: 5px; border: 1px solid #ced4da; border-radius: 4px; width: 150px;"
+               {% if selected_category in ['Activity', 'Label'] or not selected_category %}disabled{% endif %}>
+    </div>
+
+    <!-- Summary Type filter -->
+    <div class="radio-group" style="margin-top:15px;">
+        <h4>Select Summary Type</h4>
+        <label>
+            <input type="radio" name="summary_type" value="Issue Summary" {% if selected_summary_type == 'Issue Summary' or not selected_summary_type %}checked{% endif %}>
+            Issue Summary
+        </label>
+        <label>
+            <input type="radio" name="summary_type" value="Parent Summary" {% if selected_summary_type == 'Parent Summary' %}checked{% endif %}>
+            Parent Summary
+        </label>
+    </div>
+
+    <script>
+        function toggleCustomInput() {
+            const customRadio = document.querySelector('input[name="category_type"][value="Custom"]');
+            const customInput = document.getElementById('customColumnInput');
+            
+            if (customRadio.checked) {
+                customInput.disabled = false;
+                customInput.focus();
+            } else {
+                customInput.disabled = true;
+                customInput.value = '';
+            }
+        }
+        
+        // Enable custom input when user types in it
+        document.getElementById('customColumnInput').addEventListener('focus', function() {
+            document.querySelector('input[name="category_type"][value="Custom"]').checked = true;
+            this.disabled = false;
+        });
+        
+        // Handle form submission to ensure custom column value is passed
+        document.querySelector('form').addEventListener('submit', function(e) {
+            const customRadio = document.querySelector('input[name="category_type"][value="Custom"]');
+            const customInput = document.getElementById('customColumnInput');
+            
+            if (customRadio.checked && customInput.value.trim()) {
+                // Set the category_type to the custom column value for backend processing
+                customRadio.value = customInput.value.trim();
+            }
+        });
+    </script>
+
+    <button type="submit">Filter</button>
+</form>
     <div class="download-buttons">
-        <h3>Download Reports for: <span style="color: #dc3545;">{{ selected_author }}</span></h3>
-        <a href="{{ url_for('download_report', report_type='detailed', author=selected_author) }}" class="button-link">Download Detailed Timesheet</a>
-        <a href="{{ url_for('download_report', report_type='summary', author=selected_author) }}" class="button-link">Download Summary Report</a>
-        <a href="{{ url_for('download_report', report_type='sprint_closure', author=selected_author) }}" class="button-link">Download Sprint Closure Report</a>
+        <h3>Download Reports for: <span style="color: #dc3545;">{{ selected_author }}</span> ({{ selected_category or 'Activity' }}) - {{ selected_summary_type or 'Issue Summary' }}</h3>
+        <a href="{{ url_for('download_report', report_type='detailed', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary') }}" class="button-link">Download Detailed Timesheet</a>
+        <a href="{{ url_for('download_report', report_type='summary', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary') }}" class="button-link">Download Summary Report</a>
+        <a href="{{ url_for('download_report', report_type='sprint_closure', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary') }}" class="button-link">Download Sprint Closure Report</a>
     </div>
 
     <div class="results-container">

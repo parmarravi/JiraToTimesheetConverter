@@ -26,7 +26,7 @@ def get_local_ip():
 
 # --- Data Processing Functions ---
 
-def process_timesheet(df, base_url):
+def process_timesheet(df, base_url, category_type="Activity"):
     """Processes data for the detailed timesheet view."""
     if df.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -36,7 +36,19 @@ def process_timesheet(df, base_url):
     df['Date'] = pd.to_datetime(df['Start Date']).dt.strftime('%d/%b/%Y')
     df['Application/Project Name'] = df['Project Name']
     df['Activity/Task Done'] = df['Comment']
-    df['Category'] = df['Labels']
+    # ✅ Category driven by radio button selection with fallback
+    if category_type == "Activity" and 'Activity' in df.columns:
+        df['Category'] = df['Activity']
+    elif category_type == "Label" and 'Labels' in df.columns:
+        df['Category'] = df['Labels']
+    elif category_type in df.columns:
+        df['Category'] = df[category_type]  # Custom column selection
+    elif 'Labels' in df.columns:
+        df['Category'] = df['Labels']  # Fallback to Labels if available
+    elif 'Activity' in df.columns:
+        df['Category'] = df['Activity']  # Fallback to Activity if available
+    else:
+        df['Category'] = 'General'  # Default category if neither exists
     df['Ticket/Task #'] = df['Issue Key'].apply(lambda x: f"{base_url}{x}")
     df['Hours spent'] = df['Time Spent (seconds)'].apply(lambda x: round(x / 3600, 2))
     df['Start Time'] = df['Start Date'].dt.strftime('%I:%M %p')
@@ -88,18 +100,44 @@ def process_timesheet(df, base_url):
 
     return styled_df, category_totals
 
-def process_summary(df):
+def process_summary(df, category_type="Activity", summary_type="Issue Summary"):
     """Generates a summary of time spent per task."""
     if df.empty:
         return pd.DataFrame()
+    # ✅ Group by Activity or Labels based on category_type selection with fallback
+    if category_type == "Activity" and 'Activity' in df.columns:
+        group_col = 'Activity'
+    elif category_type == "Label" and 'Labels' in df.columns:
+        group_col = 'Labels'
+    elif category_type in df.columns:
+        group_col = category_type  # Custom column selection
+    elif 'Labels' in df.columns:
+        group_col = 'Labels'  # Fallback to Labels if available
+    elif 'Activity' in df.columns:
+        group_col = 'Activity'  # Fallback to Activity if available
+    else:
+        # If neither column exists, create a default category
+        df['General'] = 'General'
+        group_col = 'General'
+    
+    # ✅ Handle summary type selection (Issue Summary vs Parent Summary)
+    if summary_type == "Parent Summary" and 'Parent Summary' in df.columns:
+        summary_col = 'Parent Summary'
+    elif 'Issue Summary' in df.columns:
+        summary_col = 'Issue Summary'  # Default fallback
+    else:
+        summary_col = 'Issue Summary'  # Use as is even if column doesn't exist
+    
     summary_df = df.groupby(
-        ['Labels', 'Issue Summary', 'Author', 'Issue Status'],
+        [group_col, summary_col, 'Author', 'Issue Status'],
         as_index=False
     )['Time Spent (seconds)'].sum()
     summary_df['Total Efforts (hrs)'] = round(summary_df['Time Spent (seconds)'] / 3600, 2)
-    return summary_df[['Labels', 'Issue Summary', 'Author', 'Issue Status', 'Total Efforts (hrs)']]
+    summary_df.rename(columns={group_col: 'Category', summary_col: 'Summary'}, inplace=True)
+    
+    return summary_df[['Category', 'Summary', 'Author', 'Issue Status', 'Total Efforts (hrs)']]
 
-def process_sprint_closure_report(df):
+def process_sprint_closure_report(df, summary_type="Issue Summary"):
     """Generates the data for the Sprint Closure Report."""
     if df.empty:
         return BytesIO()
@@ -128,9 +166,21 @@ def process_sprint_closure_report(df):
     burned_capacity.reset_index(inplace=True)
     burned_capacity.rename(columns={'Author': 'Developer'}, inplace=True)
 
-    # 3. Features and Tech Debt
-    features_df = df[['Labels', 'Issue Summary', 'Original Estimate', 'Remaining Estimate', 'Issue Status', 'Author']].copy().drop_duplicates()
-    features_df.rename(columns={'Labels': 'Type of Work', 'Issue Summary': 'Particular', 'Original Estimate':'Extimated efforts','Remaining Estimate':'Actual Effrots', 'Issue Status': 'Remark', 'Author': 'Resource Name'}, inplace=True)
+    # 3. Features and Tech Debt - Handle summary type selection
+    # ✅ Use selected summary type (Issue Summary vs Parent Summary)
+    if summary_type == "Parent Summary" and 'Parent Summary' in df.columns:
+        summary_col = 'Parent Summary'
+    else:
+        summary_col = 'Issue Summary'  # Default fallback
+    
+    # ✅ Group by Type of Work and Particular, then aggregate hours properly
+    features_df = df.groupby(['Labels', summary_col, 'Author']).agg({
+        'Original Estimate': 'sum',
+        'Remaining Estimate': 'sum',
+        'Issue Status': 'first'  # Take first status for grouped items
+    }).reset_index()
+    
+    features_df.rename(columns={'Labels': 'Type of Work', summary_col: 'Particular', 'Original Estimate':'Extimated efforts','Remaining Estimate':'Actual Effrots', 'Issue Status': 'Remark', 'Author': 'Resource Name'}, inplace=True)
     features_df = features_df[['Type of Work', 'Particular', 'Resource Name', 'Extimated efforts',  'Actual Effrots', 'Remark']]
        # ✅ Sort by Author (Resource Name) and then by Type of Work
     features_df.sort_values(by=['Resource Name'], inplace=True)
@@ -209,6 +259,19 @@ def results():
         return redirect(url_for('index'))
 
     selected_author = request.args.get('author', 'All')
+    selected_category = request.args.get('category_type', 'Activity')  # default Activity
+    selected_summary_type = request.args.get('summary_type', 'Issue Summary')  # default Issue Summary
+    custom_column = request.args.get('custom_column', '')
+    
+    # Handle custom column selection - check if it's a custom column name directly
+    if selected_category not in ['Activity', 'Label'] and selected_category != 'Activity':
+        # This means selected_category contains the custom column name
+        custom_column = selected_category
+    elif selected_category == 'Custom' and custom_column:
+        selected_category = custom_column
+    
+    # Debug logging
+    print(f"Debug - selected_category: {selected_category}, custom_column: {custom_column}, summary_type: {selected_summary_type}")
 
     # Filter the main DataFrame based on selection
     if selected_author == 'All':
@@ -216,15 +279,17 @@ def results():
     else:
         display_df = global_df[global_df['Author'] == selected_author].copy()
 
-    # Generate data for the UI tables
-    _, category_totals_df = process_timesheet(display_df.copy(), global_base_url)
-    summary_df_for_ui = process_summary(display_df.copy())
+    # Generate data for the UI tables with category type and summary type
+    _, category_totals_df = process_timesheet(display_df.copy(), global_base_url, selected_category)
+    summary_df_for_ui = process_summary(display_df.copy(), selected_category, selected_summary_type)
 
     return render_template(
         'index.html',
         processed=True,
         authors=global_authors,
         selected_author=selected_author,
+        selected_category=selected_category,
+        selected_summary_type=selected_summary_type,
         category_totals=category_totals_df.to_dict(orient='records'),
         summary_data=summary_df_for_ui.to_dict(orient='records')
     )
@@ -239,6 +304,19 @@ def download_report(report_type):
         return redirect(url_for('index'))
 
     selected_author = request.args.get('author', 'All')
+    selected_category = request.args.get('category_type', 'Activity')  # default Activity
+    selected_summary_type = request.args.get('summary_type', 'Issue Summary')  # default Issue Summary
+    custom_column = request.args.get('custom_column', '')
+    
+    # Handle custom column selection - check if it's a custom column name directly
+    if selected_category not in ['Activity', 'Label'] and selected_category != 'Activity':
+        # This means selected_category contains the custom column name
+        custom_column = selected_category
+    elif selected_category == 'Custom' and custom_column:
+        selected_category = custom_column
+    
+    # Debug logging
+    print(f"Debug Download - selected_category: {selected_category}, custom_column: {custom_column}, summary_type: {selected_summary_type}")
     print(selected_author)
 
     # Filter the main DataFrame based on selection
@@ -247,21 +325,21 @@ def download_report(report_type):
     else:
         display_df = global_df[global_df['Author'] == selected_author].copy()
 
-    # Generate the requested file
+    # Generate the requested file with category type
     if report_type == 'detailed':
-        output_df, _ = process_timesheet(display_df, global_base_url)
+        output_df, _ = process_timesheet(display_df, global_base_url, selected_category)
         file_io = BytesIO()
         output_df.to_excel(file_io, index=False, sheet_name='Detailed Timesheet')
         file_io.seek(0)
         download_name = original_filename.rsplit('.', 1)[0] + "_detailed.xlsx"
     elif report_type == 'summary':
-        summary_df = process_summary(display_df)
+        summary_df = process_summary(display_df, selected_category, selected_summary_type)
         file_io = BytesIO()
         summary_df.to_excel(file_io, index=False, sheet_name='Summary Report')
         file_io.seek(0)
         download_name = "jira_summary.xlsx"
     elif report_type == 'sprint_closure':
-        file_io = process_sprint_closure_report(display_df)
+        file_io = process_sprint_closure_report(display_df, selected_summary_type)
         download_name = "sprint_closure_report.xlsx"
     else:
         return "Invalid report type", 404
