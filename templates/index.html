@@ -6,12 +6,59 @@
     <title>Jira Timesheet Processor</title>
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            line-height: 1.6;
+            font-family: Arial, sans-serif;
+            margin: 20px;
             background-color: #f8f9fa;
-            color: #212529;
-            margin: 0;
-            padding: 20px;
+        }
+        
+        /* Toggle Switch Styles */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+        }
+        
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 24px;
+        }
+        
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .slider {
+            background-color: #007bff;
+        }
+        
+        input:focus + .slider {
+            box-shadow: 0 0 1px #007bff;
+        }
+        
+        input:checked + .slider:before {
+            transform: translateX(26px);
         }
         .main-container {
             max-width: 1200px;
@@ -111,6 +158,13 @@
             background-color: #d4edda !important;
             color: #155724;
         }
+        
+        /* Style for No Label/Empty category rows */
+        .no-label-row {
+            background-color: #fff3cd !important;
+            color: #856404;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -157,7 +211,7 @@
     </form> -->
 
     <!-- Author Filter Form -->
-<form action="{{ url_for('results') }}" method="get" class="filter-form">
+<form action="{{ url_for('results') }}" method="get" class="filter-form" onsubmit="preserveOvertimeState()">
     <h3>Filter Report</h3>
 
     <!-- Author filter -->
@@ -209,7 +263,171 @@
         </label>
     </div>
 
+    <!-- Overtime UI Toggle -->
+    <div style="margin-top:15px;">
+        <label style="display: flex; align-items: center; gap: 15px; font-weight: bold; color: #495057;">
+            <span style="font-size: 1.1em;">📊 Show Overtime Analysis</span>
+            <div class="toggle-switch">
+                <input type="checkbox" id="showOvertimeUI" onchange="toggleOvertimeUI()">
+                <span class="slider"></span>
+            </div>
+        </label>
+    </div>
+
+    <!-- Overtime Calculation Settings Toggle -->
+    <div id="overtimeSettingsToggle" style="margin-top:15px; display: none;">
+        <button type="button" onclick="toggleOvertimeSettings()" style="background: linear-gradient(135deg, #abd4e7 0%, #0077ff 100%); color: #856404; border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 4px rgba(255, 193, 7, 0.3); transition: all 0.3s ease;">
+            <span style="font-size: 1.2em;">⚙️</span> 
+            <span id="overtimeToggleText">Show Overtime Calculation Settings</span>
+            <span id="overtimeToggleIcon" style="font-size: 0.8em;">▼</span>
+        </button>
+    </div>
+
+    <!-- Overtime Calculation Settings -->
+    <div id="overtimeSettingsPanel" style="display: none; margin-top:10px; background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); padding: 20px; border-radius: 8px; border: 2px solid #ffc107; box-shadow: 0 4px 8px rgba(255, 193, 7, 0.2);">
+        <h4 style="color: #856404; margin-top: 0; display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 1.2em;">⚙️</span> Overtime Calculation Settings
+        </h4>
+        
+        <!-- Working Days Selection -->
+        <div style="margin-bottom: 15px;">
+            <h5 style="margin-bottom: 8px; color: #495057;">Working Days:</h5>
+            <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
+                {% set default_working_days = working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] %}
+                <label style="display: flex; align-items: center; gap: 5px;">
+                    <input type="checkbox" name="working_days" value="Monday" 
+                           {% if 'Monday' in default_working_days %}checked{% endif %}>
+                    Mon
+                </label>
+                <label style="display: flex; align-items: center; gap: 5px;">
+                    <input type="checkbox" name="working_days" value="Tuesday" 
+                           {% if 'Tuesday' in default_working_days %}checked{% endif %}>
+                    Tue
+                </label>
+                <label style="display: flex; align-items: center; gap: 5px;">
+                    <input type="checkbox" name="working_days" value="Wednesday" 
+                           {% if 'Wednesday' in default_working_days %}checked{% endif %}>
+                    Wed
+                </label>
+                <label style="display: flex; align-items: center; gap: 5px;">
+                    <input type="checkbox" name="working_days" value="Thursday" 
+                           {% if 'Thursday' in default_working_days %}checked{% endif %}>
+                    Thu
+                </label>
+                <label style="display: flex; align-items: center; gap: 5px;">
+                    <input type="checkbox" name="working_days" value="Friday" 
+                           {% if 'Friday' in default_working_days %}checked{% endif %}>
+                    Fri
+                </label>
+                <label style="display: flex; align-items: center; gap: 5px;">
+                    <input type="checkbox" name="working_days" value="Saturday" 
+                           {% if 'Saturday' in default_working_days %}checked{% endif %}>
+                    Sat
+                </label>
+                <label style="display: flex; align-items: center; gap: 5px;">
+                    <input type="checkbox" name="working_days" value="Sunday" 
+                           {% if 'Sunday' in default_working_days %}checked{% endif %}>
+                    Sun
+                </label>
+            </div>
+        </div>
+
+        <!-- Other Settings -->
+        <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+            <label style="display: flex; align-items: center; gap: 5px;">
+                Working Hours/Day:
+                <input type="number" name="working_hours" step="0.5" min="1" max="24" value="{{ working_hours or 8 }}" 
+                       style="width: 80px; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+            </label>
+            <label style="display: flex; align-items: center; gap: 5px;">
+                Leave Days:
+                <input type="number" name="leave_days" step="0.5" min="0" value="{{ leave_days or 0 }}" 
+                       style="width: 80px; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+            </label>
+            <label style="display: flex; align-items: center; gap: 5px;">
+                Holiday Days:
+                <input type="number" name="holiday_days" step="0.5" min="0" value="{{ holiday_days or 0 }}" 
+                       style="width: 80px; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+            </label>
+        </div>
+        <small style="color: #856404; margin-top: 5px; display: block; font-weight: 500;">
+            <strong>Working Days:</strong> Select which days are considered working days (default: Mon-Fri). Non-working days will be counted as overtime. <br>
+            <strong>Working Hours:</strong> Hours per day to consider for overtime calculation (default: 8). <br>
+            <strong>Leave/Holiday Days:</strong> Enter days (e.g., 1 for full day, 0.5 for half day). These will be counted as overtime hours.
+        </small>
+    </div>
+
+    <!-- Chart.js Library -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
     <script>
+        // Weekly Overtime Chart
+        {% if weekly_overtime_data and weekly_overtime_data.weeks %}
+        document.addEventListener('DOMContentLoaded', function() {
+            const ctx = document.getElementById('weeklyOvertimeChart').getContext('2d');
+            const weekLabels = {{ weekly_overtime_data.weeks | tojson }};
+            const overtimeHours = {{ weekly_overtime_data.overtime_hours | tojson }};
+            const dateRanges = {{ weekly_overtime_data.date_ranges | tojson }};
+            
+            const weeklyOvertimeChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: weekLabels,
+                    datasets: [{
+                        label: 'Overtime Hours',
+                        data: overtimeHours,
+                        borderColor: 'rgb(255, 99, 132)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Weekly Overtime Hours Trend'
+                        },
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title: function(context) {
+                                    const index = context[0].dataIndex;
+                                    const week = weekLabels[index];
+                                    const dateRange = dateRanges[index];
+                                    return week + (dateRange ? '\n(' + dateRange + ')' : '');
+                                },
+                                label: function(context) {
+                                    return 'Overtime Hours: ' + context.parsed.y;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Hours'
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Week'
+                            }
+                        }
+                    }
+                }
+            });
+        });
+        {% endif %}
+        
         function toggleCustomInput() {
             const customRadio = document.querySelector('input[name="category_type"][value="Custom"]');
             const customInput = document.getElementById('customColumnInput');
@@ -220,6 +438,76 @@
             } else {
                 customInput.disabled = true;
                 customInput.value = '';
+            }
+        }
+        
+        function toggleOvertimeUI() {
+            const checkbox = document.getElementById('showOvertimeUI');
+            const settingsToggle = document.getElementById('overtimeSettingsToggle');
+            const overtimeChart = document.getElementById('overtimeChart');
+            const overtimeBreakdown = document.getElementById('overtimeBreakdown');
+            
+            // Save state to localStorage
+            localStorage.setItem('overtimeUIEnabled', checkbox.checked);
+            
+            if (checkbox.checked) {
+                // Show overtime UI elements
+                settingsToggle.style.display = 'block';
+                if (overtimeChart) overtimeChart.style.display = 'block';
+                if (overtimeBreakdown) overtimeBreakdown.style.display = 'block';
+            } else {
+                // Hide overtime UI elements
+                settingsToggle.style.display = 'none';
+                if (overtimeChart) overtimeChart.style.display = 'none';
+                if (overtimeBreakdown) overtimeBreakdown.style.display = 'none';
+                // Also hide the settings panel if it's open
+                const panel = document.getElementById('overtimeSettingsPanel');
+                if (panel) panel.style.display = 'none';
+                const toggleText = document.getElementById('overtimeToggleText');
+                const toggleIcon = document.getElementById('overtimeToggleIcon');
+                if (toggleText) toggleText.textContent = 'Show Overtime Calculation Settings';
+                if (toggleIcon) toggleIcon.textContent = '▼';
+            }
+        }
+        
+        // Restore overtime UI state on page load
+        function restoreOvertimeState() {
+            const savedState = localStorage.getItem('overtimeUIEnabled');
+            if (savedState === 'true') {
+                const checkbox = document.getElementById('showOvertimeUI');
+                if (checkbox) {
+                    checkbox.checked = true;
+                    toggleOvertimeUI();
+                }
+            }
+        }
+        
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            restoreOvertimeState();
+        });
+        
+        // Function to preserve overtime state before form submission
+        function preserveOvertimeState() {
+            const checkbox = document.getElementById('showOvertimeUI');
+            if (checkbox) {
+                localStorage.setItem('overtimeUIEnabled', checkbox.checked);
+            }
+        }
+        
+        function toggleOvertimeSettings() {
+            const panel = document.getElementById('overtimeSettingsPanel');
+            const toggleText = document.getElementById('overtimeToggleText');
+            const toggleIcon = document.getElementById('overtimeToggleIcon');
+            
+            if (panel.style.display === 'none' || panel.style.display === '') {
+                panel.style.display = 'block';
+                toggleText.textContent = 'Hide Overtime Calculation Settings';
+                toggleIcon.textContent = '▲';
+            } else {
+                panel.style.display = 'none';
+                toggleText.textContent = 'Show Overtime Calculation Settings';
+                toggleIcon.textContent = '▼';
             }
         }
         
@@ -245,12 +533,17 @@
 </form>
     <div class="download-buttons">
         <h3>Download Reports for: <span style="color: #dc3545;">{{ selected_author }}</span> ({{ selected_category or 'Activity' }}) - {{ selected_summary_type or 'Issue Summary' }}</h3>
-        <a href="{{ url_for('download_report', report_type='detailed', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary') }}" class="button-link">Download Detailed Timesheet</a>
-        <a href="{{ url_for('download_report', report_type='summary', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary') }}" class="button-link">Download Summary Report</a>
-        <a href="{{ url_for('download_report', report_type='sprint_closure', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary') }}" class="button-link">Download Sprint Closure Report</a>
+        {% if selected_author == 'All' %}
+        <a href="{{ url_for('download_bulk_reports', report_type='detailed', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}" class="button-link">Download All Authors Timesheets (Bulk)</a>
+        {% else %}
+        <a href="{{ url_for('download_report', report_type='detailed', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}" class="button-link">Download Detailed Timesheet</a>
+        {% endif %}
+        <a href="{{ url_for('download_report', report_type='summary', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}" class="button-link">Download Summary Report</a>
+        <a href="{{ url_for('download_report', report_type='sprint_closure', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}" class="button-link">Download Sprint Closure Report</a>
     </div>
 
     <div class="results-container">
+
         <div class="table-container">
             <h3>Total Hours per Category</h3>
             <table>
@@ -262,65 +555,122 @@
                 </thead>
                 <tbody>
                     {% for item in category_totals %}
-                    <tr>
+                    <tr {% if item['Category'] == 'No Label/Empty' %}class="no-label-row"{% endif %}>
                         <td>{{ item['Category'] }}</td>
                         <td>{{ "%.2f"|format(item['Hours spent']) }}</td>
                     </tr>
                     {% else %}
                     <tr><td colspan="2">No data for this selection.</td></tr>
                     {% endfor %}
+                    {% if category_totals %}
+                    <tr style="background-color: #e9ecef; font-weight: bold; border-top: 2px solid #007bff;">
+                        <td><strong>Total</strong></td>
+                        <td><strong>{{ "%.2f"|format(category_total_sum) }}</strong></td>
+                    </tr>
+                    {% endif %}
                 </tbody>
             </table>
         </div>
 
-<div class="table-container">
-    <h3>Category vs Total Hours</h3>
-    <canvas id="categoryPieChart"></canvas>
-</div>
+        <div class="table-container">
+            <h3>Category vs Total Hours</h3>
+            <canvas id="categoryPieChart"></canvas>
+        </div>
 
-<!-- Chart.js and Plugin -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
-<script>
-    // Pass Jinja data to JavaScript
-    const categoryData = {{ category_totals|tojson }};
-    
-    const labels = categoryData.map(item => item["Category"]);
-    const hours = categoryData.map(item => item["Hours spent"]);
-    const totalHours = hours.reduce((a, b) => a + b, 0);
+        <!-- Weekly Overtime Chart -->
+        {% if weekly_overtime_data and weekly_overtime_data.weeks %}
+        <div id="overtimeChart" class="chart-container" style="margin-bottom: 30px; display: none;">
+            <h3>Weekly Overtime Hours</h3>
+            <canvas id="weeklyOvertimeChart" width="800" height="400"></canvas>
+        </div>
+        {% endif %}
+        
+       
+        <div id="overtimeBreakdown" class="table-container" style="display: none;">
+            <h3>Overtime Hours</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Overtime Type</th>
+                        <th>Hours</th>
+                        <th>Description</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Non-Working Day Hours</td>
+                        <td>{{ "%.2f"|format(overtime_data.weekend_hours) }}</td>
+                        <td>All hours worked on non-working days</td>
+                    </tr>
+                    <tr>
+                        <td>Daily Overtime</td>
+                        <td>{{ "%.2f"|format(overtime_data.daily_overtime) }}</td>
+                        <td>Hours beyond {{ working_hours or 8 }} per day on weekdays</td>
+                    </tr>
+                    <tr>
+                        <td>Leave Days</td>
+                        <td>{{ "%.2f"|format(overtime_data.leave_overtime) }}</td>
+                        <td>{{ leave_days or 0 }} days × {{ working_hours or 8 }} hours</td>
+                    </tr>
+                    <tr>
+                        <td>Holiday Days</td>
+                        <td>{{ "%.2f"|format(overtime_data.holiday_overtime) }}</td>
+                        <td>{{ holiday_days or 0 }} days × {{ working_hours or 8 }} hours</td>
+                    </tr>
+                    <tr style="background-color: #fff3cd; font-weight: bold; border-top: 2px solid #ffc107;">
+                        <td><strong>Total Overtime</strong></td>
+                        <td><strong>{{ "%.2f"|format(overtime_data.total_overtime) }}</strong></td>
+                        <td><strong>All overtime hours combined</strong></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
 
-    const ctx = document.getElementById('categoryPieChart').getContext('2d');
-    new Chart(ctx, {
-        type: 'pie',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Total Hours',
-                data: hours,
-                backgroundColor: [
-                    '#007bff', '#28a745', '#ffc107', '#dc3545',
-                    '#17a2b8', '#6f42c1', '#20c997', '#fd7e14'
-                ],
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { position: 'right' },
-                datalabels: {
-                    color: '#fff',
-                    font: { weight: 'bold' },
-                    formatter: (value, ctx) => {
-                        let percentage = (value / totalHours * 100).toFixed(1) + "%";
-                        return percentage;
+        <!-- Chart.js and Plugin -->
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+        <script>
+            // Pass Jinja data to JavaScript
+            const categoryData = JSON.parse('{{ category_totals|tojson|safe }}');
+            
+            if (categoryData && categoryData.length > 0) {
+                const labels = categoryData.map(item => item["Category"]);
+                const hours = categoryData.map(item => item["Hours spent"]);
+                const totalHours = hours.reduce((a, b) => a + b, 0);
+
+            const ctx = document.getElementById('categoryPieChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'pie',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Total Hours',
+                        data: hours,
+                        backgroundColor: [
+                            '#007bff', '#28a745', '#ffc107', '#dc3545',
+                            '#17a2b8', '#6f42c1', '#20c997', '#fd7e14'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'right' },
+                        datalabels: {
+                            color: '#fff',
+                            font: { weight: 'bold' },
+                            formatter: (value, ctx) => {
+                                let percentage = (value / totalHours * 100).toFixed(1) + "%";
+                                return percentage;
+                            }
+                        }
                     }
-                }
+                },
+                plugins: [ChartDataLabels]
+            });
             }
-        },
-        plugins: [ChartDataLabels]
-    });
-</script>
+        </script>
     </div>
 
          <div class="table-container">
