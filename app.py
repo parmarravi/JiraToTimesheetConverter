@@ -1,15 +1,15 @@
 import socket
 import pandas as pd
 from io import BytesIO
-from flask import Flask, render_template, request, send_file, redirect, url_for
-
-app = Flask(__name__)
+from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify
+app = Flask(__name__, static_folder='static')
 
 # --- Global variables to hold the application's state ---
 global_df = None
 global_authors = []
 global_base_url = ""
 original_filename = "timesheet.xlsx"
+global_holidays = set()  # <-- Add this line
 
 
 def get_local_ip():
@@ -26,7 +26,7 @@ def get_local_ip():
 
 # --- Data Processing Functions ---
 
-def process_timesheet(df, base_url, category_type="Activity", working_days=None):
+def process_timesheet(df, base_url, category_type="Activity", working_days=None, holidays=None):
     if df.empty:
         return pd.DataFrame(), pd.DataFrame()
     
@@ -62,6 +62,8 @@ def process_timesheet(df, base_url, category_type="Activity", working_days=None)
     # Identify non-working days and working days
     non_working_days = all_dates[~all_dates.weekday.isin(working_day_nums)]
     working_days_dates = all_dates[all_dates.weekday.isin(working_day_nums)]
+    # Add: Identify holidays in the date range
+    holiday_days = pd.to_datetime(list(holidays)) if holidays else pd.DatetimeIndex([])
     
     # Get all dates from original data (including 0-hour entries) and actual work dates with hours > 0
     all_logged_dates = set(df['Start Date'].unique())
@@ -85,13 +87,15 @@ def process_timesheet(df, base_url, category_type="Activity", working_days=None)
     result = complete_dates.merge(daily_hours, on='Start Date', how='left')
     result['Hours'] = result['Hours'].fillna(0)
     
-    # Add category and styling information with leave detection
+    # Add category and styling information with leave detection and holiday
     def categorize_day(row):
         date = row['Start Date']
         hours = row['Hours']
-        
+        date_str = date.strftime('%Y-%m-%d')
         if date in non_working_days:
             return 'Non-Working Day'
+        elif date in holiday_days:
+            return 'Holiday'
         elif date in potential_leave_dates:
             return 'Leave'
         elif hours > 0:
@@ -220,107 +224,211 @@ def process_timesheet(df, base_url, category_type="Activity", working_days=None)
 
     return styled_df, category_totals
 
-def calculate_weekly_overtime(df, working_hours=8, working_days=None):
-    """Calculate weekly overtime hours for chart visualization"""
-    if df.empty:
-        return {'weeks': [], 'overtime_hours': []}
+# def calculate_weekly_overtime(df, working_hours=8, working_days=None, holidays=None):
+#     """Calculate weekly overtime hours for chart visualization"""
+#     if df.empty:
+#         return {'weeks': [], 'overtime_hours': [], 'date_ranges': []}
     
+#     if working_days is None:
+#         working_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+#     if holidays is None:
+#         holidays = []
+
+#     # Ensure proper datetime handling
+#     df['Start Date'] = pd.to_datetime(df['Start Date'])
+    
+#     # Calculate hours from seconds and ensure proper date handling
+#     df['Hours spent'] = df['Time Spent (seconds)'] / 3600
+#     df['Week_Start'] = df['Start Date'].dt.to_period('W').apply(lambda r: r.start_time)
+#     df['Week_End'] = df['Start Date'].dt.to_period('W').apply(lambda r: r.end_time)
+#     df['Week_Number'] = df['Start Date'].dt.isocalendar().week
+#     df['Year'] = df['Start Date'].dt.isocalendar().year
+#     df['WeekKey'] = df['Year'].astype(str) + '-W' + df['Week_Number'].astype(str).str.zfill(2)
+#     df['Weekday'] = df['Start Date'].dt.weekday
+#     df['DateStr'] = df['Start Date'].dt.strftime('%Y-%m-%d')
+
+#     # Map working days to numbers
+#     day_name_to_num = {
+#         'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3,
+#         'Friday': 4, 'Saturday': 5, 'Sunday': 6
+#     }
+#     working_day_nums = [day_name_to_num[day] for day in working_days if day in day_name_to_num]
+
+#     weekly_data = []
+    
+#     # Group by week and calculate overtime
+#     for week_group in df.groupby(['WeekKey', 'Week_Start', 'Week_End']):
+#         week_key = week_group[0][0]
+#         week_start = week_group[0][1]
+#         week_end = week_group[0][2]
+#         week_df = week_group[1]
+        
+#         # Calculate each component of overtime
+#         # 1. Non-working days overtime (only count actual work on weekends)
+#         weekend_hours = week_df[~week_df['Weekday'].isin(working_day_nums)]['Hours spent'].sum()
+        
+#         # 2. Holiday overtime (only count actual work on holidays)
+#         holiday_hours = week_df[week_df['DateStr'].isin(holidays)]['Hours spent'].sum()
+        
+#         # 3. Daily overtime on working days (only count hours beyond working_hours)
+#         daily_overtime = 0
+#         for date, day_df in week_df.groupby('Start Date'):
+#             date_str = date.strftime('%Y-%m-%d')
+#             # Only calculate overtime for working days that aren't holidays
+#             if (pd.to_datetime(date).weekday() in working_day_nums and 
+#                 date_str not in holidays):
+#                 day_hours = day_df['Hours spent'].sum()
+#                 if day_hours > working_hours:
+#                     daily_overtime += (day_hours - working_hours)
+        
+#         # Sum all overtime components
+#         total_overtime = weekend_hours + holiday_hours + daily_overtime
+        
+#         # Format date range
+#         date_range = f"{week_start.strftime('%d/%m/%Y')} - {week_end.strftime('%d/%m/%Y')}"
+        
+#         if total_overtime > 0:  # Only add weeks with overtime
+#             weekly_data.append({
+#                 'week': week_key,
+#                 'overtime_hours': round(total_overtime, 2),
+#                 'date_range': date_range
+#             })
+
+#     # Sort by week
+#     weekly_data.sort(key=lambda x: x['week'])
+    
+#     # Print debug information
+#     print("Weekly Overtime Data:")
+#     for week in weekly_data:
+#         print(f"Week: {week['week']}, Overtime: {week['overtime_hours']}")
+        
+#     return {
+#         'weeks': [item['week'] for item in weekly_data],
+#         'overtime_hours': [item['overtime_hours'] for item in weekly_data],
+#         'date_ranges': [item['date_range'] for item in weekly_data]
+#     }
+
+def calculate_weekly_overtime(df, working_hours=8, working_days=None, holidays=None, author_filter="All"):
+    """Calculate weekly overtime hours for chart visualization (aligned with calculate_overtime_hours)"""
+
+    if df.empty:
+        return {'weeks': [], 'overtime_hours': [], 'date_ranges': []}
+
     if working_days is None:
         working_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-    
-    # Map day names to weekday numbers
-    day_name_to_num = {
-        'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3,
-        'Friday': 4, 'Saturday': 5, 'Sunday': 6
-    }
-    working_day_nums = [day_name_to_num[day] for day in working_days if day in day_name_to_num]
-    
+    if holidays is None:
+        holidays = []
+
+    # Ensure datetime & hours
     df['Start Date'] = pd.to_datetime(df['Start Date']).dt.tz_localize(None)
     df['Hours spent'] = df['Time Spent (seconds)'] / 3600
-    df['Weekday'] = df['Start Date'].dt.weekday
-    df['Week'] = df['Start Date'].dt.isocalendar().week
-    df['Year'] = df['Start Date'].dt.year
-    df['Week_Year'] = df['Year'].astype(str) + '-W' + df['Week'].astype(str).str.zfill(2)
-    
-    # Calculate weekly overtime
+    df['Week_Start'] = df['Start Date'].dt.to_period('W').apply(lambda r: r.start_time)
+    df['Week_End'] = df['Start Date'].dt.to_period('W').apply(lambda r: r.end_time)
+    df['Week_Number'] = df['Start Date'].dt.isocalendar().week
+    df['Year'] = df['Start Date'].dt.isocalendar().year
+    df['WeekKey'] = df['Year'].astype(str) + '-W' + df['Week_Number'].astype(str).str.zfill(2)
+
+    # Author filter
+    if author_filter != "All":
+        df = df[df['Author'] == author_filter]
+
     weekly_data = []
-    for week_year in sorted(df['Week_Year'].unique()):
-        week_df = df[df['Week_Year'] == week_year]
-        
-        # Get date range for this week
-        week_dates = week_df['Start Date'].unique()
-        if len(week_dates) > 0:
-            start_date = min(week_dates).strftime('%d/%m/%Y')
-            end_date = max(week_dates).strftime('%d/%m/%Y')
-            date_range = f"{start_date} - {end_date}"
-        else:
-            date_range = ""
-        
-        # Non-working day overtime
-        non_working_overtime = week_df[~week_df['Weekday'].isin(working_day_nums)]['Hours spent'].sum()
-        
-        # Daily overtime (hours > working_hours per day)
-        daily_overtime = 0
-        for date in week_df['Start Date'].unique():
-            daily_hours = week_df[week_df['Start Date'] == date]['Hours spent'].sum()
-            if pd.to_datetime(date).weekday() in working_day_nums and daily_hours > working_hours:
-                daily_overtime += (daily_hours - working_hours)
-        
-        total_weekly_overtime = non_working_overtime + daily_overtime
-        weekly_data.append({
-            'week': week_year,
-            'overtime_hours': round(total_weekly_overtime, 2),
-            'date_range': date_range
-        })
-    
+
+    # Group week by week
+    for (week_key, week_start, week_end), week_df in df.groupby(['WeekKey', 'Week_Start', 'Week_End']):
+        # 👇 Reuse your existing overtime calculation
+        overtime_summary = calculate_overtime_hours(
+            week_df,
+            leave_days=0,
+            holiday_days=0,
+            working_hours=working_hours,
+            working_days=working_days,
+            holidays=holidays
+        )
+
+        total_overtime = overtime_summary['total_overtime']
+
+        if total_overtime > 0:
+            date_range = f"{week_start.strftime('%d/%m/%Y')} - {week_end.strftime('%d/%m/%Y')}"
+            weekly_data.append({
+                'week': week_key,
+                'overtime_hours': round(total_overtime, 2),
+                'date_range': date_range
+            })
+
+    # Sort by week
+    weekly_data.sort(key=lambda x: x['week'])
+
     return {
         'weeks': [item['week'] for item in weekly_data],
         'overtime_hours': [item['overtime_hours'] for item in weekly_data],
-        'date_ranges': [item.get('date_range', '') for item in weekly_data]
+        'date_ranges': [item['date_range'] for item in weekly_data]
     }
 
-def calculate_overtime_hours(df, leave_days=0, holiday_days=0, working_hours=8, working_days=None):
-    """Calculate overtime hours based on custom working days and daily overtime work."""
+
+def calculate_overtime_hours(df, leave_days=0, holiday_days=0, working_hours=8, working_days=None, holidays=None):
+    """
+    Calculate overtime hours based on custom working days and daily overtime work.
+    For 'All' authors, sum up all overtime components across all authors.
+    """
     if df.empty:
         return {'weekend_hours': 0, 'daily_overtime': 0, 'leave_overtime': 0, 'holiday_overtime': 0, 'total_overtime': 0}
     
-    # Default working days (Monday to Friday)
     if working_days is None:
         working_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-    
-    # Map day names to weekday numbers (Monday=0, Sunday=6)
+    if holidays is None:
+        holidays = []
+
     day_name_to_num = {
         'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3,
         'Friday': 4, 'Saturday': 5, 'Sunday': 6
     }
     working_day_nums = [day_name_to_num[day] for day in working_days if day in day_name_to_num]
-    
+
     df['Start Date'] = pd.to_datetime(df['Start Date']).dt.tz_localize(None)
     df['Hours spent'] = df['Time Spent (seconds)'] / 3600
     df['Weekday'] = df['Start Date'].dt.weekday
-    
-    # Non-working day overtime (all hours worked on non-working days)
-    non_working_day_work = df[~df['Weekday'].isin(working_day_nums)]
-    weekend_hours = non_working_day_work['Hours spent'].sum()
-    
-    # Daily overtime (hours > working_hours per day on working days)
-    working_day_work = df[df['Weekday'].isin(working_day_nums)]
-    daily_totals = working_day_work.groupby(working_day_work['Start Date'].dt.date)['Hours spent'].sum()
-    daily_overtime = daily_totals[daily_totals > working_hours].apply(lambda x: x - working_hours).sum()
-    
-    # Leave and holiday overtime (convert days to hours using working_hours)
-    leave_overtime = leave_days * working_hours
-    holiday_overtime = holiday_days * working_hours
-    
-    total_overtime = weekend_hours + daily_overtime + leave_overtime + holiday_overtime
-    
-    return {
-        'weekend_hours': round(weekend_hours, 2),
-        'daily_overtime': round(daily_overtime, 2), 
-        'leave_overtime': round(leave_overtime, 2),
-        'holiday_overtime': round(holiday_overtime, 2),
-        'total_overtime': round(total_overtime, 2)
+    df['DateStr'] = df['Start Date'].dt.strftime('%Y-%m-%d')
+
+    # Group by Author and Date for daily overtime calculation
+    daily_work = df.groupby(['Author', 'Start Date', 'Weekday', 'DateStr'])['Hours spent'].sum().reset_index()
+
+    # Calculate overtime components for each author
+    overtime_by_author = []
+    for author in df['Author'].unique():
+        author_data = daily_work[daily_work['Author'] == author]
+        weekend_hours = author_data[~author_data['Weekday'].isin(working_day_nums)]['Hours spent'].sum()
+        holiday_hours = author_data[author_data['DateStr'].isin(holidays)]['Hours spent'].sum()
+        working_day_records = author_data[
+            (author_data['Weekday'].isin(working_day_nums)) & 
+            (~author_data['DateStr'].isin(holidays))
+        ]
+        daily_overtime = working_day_records[working_day_records['Hours spent'] > working_hours]['Hours spent'].apply(lambda x: x - working_hours).sum()
+        leave_overtime = leave_days * working_hours
+        total_overtime = weekend_hours + holiday_hours + daily_overtime + leave_overtime
+
+        overtime_by_author.append({
+            'author': author,
+            'weekend_hours': round(weekend_hours, 2),
+            'holiday_overtime': round(holiday_hours, 2),
+            'daily_overtime': round(daily_overtime, 2),
+            'leave_overtime': round(leave_overtime, 2),
+            'total_overtime': round(total_overtime, 2)
+        })
+
+    # If only one author selected, return their overtime
+    if len(overtime_by_author) == 1:
+        return overtime_by_author[0]
+
+    # For 'All' authors, sum up the components
+    total_overtime = {
+        'weekend_hours': round(sum(a['weekend_hours'] for a in overtime_by_author), 2),
+        'holiday_overtime': round(sum(a['holiday_overtime'] for a in overtime_by_author), 2),
+        'daily_overtime': round(sum(a['daily_overtime'] for a in overtime_by_author), 2),
+        'leave_overtime': round(sum(a['leave_overtime'] for a in overtime_by_author), 2)
     }
+    total_overtime['total_overtime'] = round(sum(total_overtime.values()), 2)
+    return total_overtime
 
 def process_summary(df, category_type="Activity", summary_type="Issue Summary"):
     """Generates a summary of time spent per task."""
@@ -434,7 +542,18 @@ def process_sprint_closure_report(df, summary_type="Issue Summary"):
 @app.route('/')
 def index():
     """Renders the initial upload page."""
-    return render_template('index.html', processed=False)
+    return render_template('index.html', 
+                         processed=False,
+                         holidays=list(global_holidays) if global_holidays else [],
+                         weekly_overtime_data=None,
+                         category_totals=None,
+                         overtime_data={  # Add default overtime data
+                             'weekend_hours': 0,
+                             'daily_overtime': 0,
+                             'leave_overtime': 0,
+                             'holiday_overtime': 0,
+                             'total_overtime': 0
+                         })
 
 @app.route('/process', methods=['POST'])
 def process_file_route():
@@ -471,6 +590,73 @@ def process_file_route():
     # Redirect to the report page
     return redirect(url_for('results'))
 
+@app.route('/upload_holidays', methods=['POST'])
+def upload_holidays():
+    """
+    Accepts an Excel file with a single column of dates and updates the global_holidays set.
+    """
+    global global_holidays
+    file = request.files.get('file')
+    if not file:
+        return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+    try:
+        df = pd.read_excel(file)
+        if df.empty:
+            return jsonify({'success': False, 'error': 'Excel file is empty'}), 400
+            
+        # Try to identify date column
+        date_columns = []
+        for col in df.columns:
+            # Try parsing as date with various formats
+            try:
+                dates = pd.to_datetime(df[col], errors='coerce')
+                if not dates.isna().all():  # If at least some values parsed as dates
+                    date_columns.append(col)
+            except:
+                continue
+        
+        if not date_columns:
+            return jsonify({'success': False, 'error': 'No valid date columns found'}), 400
+            
+        # Use first date column found
+        dates = pd.to_datetime(df[date_columns[0]], errors='coerce')
+        valid_dates = dates.dropna()
+        
+        if len(valid_dates) == 0:
+            return jsonify({'success': False, 'error': 'No valid dates found'}), 400
+            
+        # Update global holidays
+        global_holidays.update(valid_dates.dt.strftime('%Y-%m-%d').tolist())
+        
+        return jsonify({
+            'success': True, 
+            'holidays': list(global_holidays),
+            'message': f'Imported {len(valid_dates)} dates successfully'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/set_holidays', methods=['POST'])
+def set_holidays():
+    """
+    Accepts a JSON list of dates (YYYY-MM-DD) from the calendar UI and updates the global_holidays set.
+    """
+    global global_holidays
+    try:
+        data = request.get_json()
+        holidays = data.get('holidays', [])
+        global_holidays = set(holidays)
+        return jsonify({'success': True, 'holidays': list(global_holidays)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/get_holidays', methods=['GET'])
+def get_holidays():
+    """
+    Returns the current list of holidays.
+    """
+    return jsonify({'holidays': list(global_holidays)})
+
 @app.route('/report')
 def results():
     """
@@ -488,7 +674,8 @@ def results():
     holiday_days = float(request.args.get('holiday_days', 0))
     working_hours = float(request.args.get('working_hours', 8))
     working_days = request.args.getlist('working_days') or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-    
+    holidays = list(global_holidays)
+
     # Handle custom column selection - check if it's a custom column name directly
     if selected_category not in ['Activity', 'Label'] and selected_category != 'Activity':
         # This means selected_category contains the custom column name
@@ -506,14 +693,14 @@ def results():
         display_df = global_df[global_df['Author'] == selected_author].copy()
 
     # Generate data for the UI tables with category type and summary type
-    _, category_totals_df = process_timesheet(display_df.copy(), global_base_url, selected_category, working_days)
+    _, category_totals_df = process_timesheet(display_df.copy(), global_base_url, selected_category, working_days, holidays)
     summary_df_for_ui = process_summary(display_df.copy(), selected_category, selected_summary_type)
     
     # Calculate overtime hours
-    overtime_data = calculate_overtime_hours(display_df.copy(), leave_days, holiday_days, working_hours, working_days)
+    overtime_data = calculate_overtime_hours(display_df.copy(), leave_days, 0, working_hours, working_days, holidays)
     
     # Calculate weekly overtime data for chart
-    weekly_overtime_data = calculate_weekly_overtime(display_df.copy(), working_hours, working_days)
+    weekly_overtime_data = calculate_weekly_overtime(display_df.copy(), working_hours, working_days, holidays)
     
     # Calculate category total sum
     category_total_sum = category_totals_df['Hours spent'].sum() if not category_totals_df.empty else 0
@@ -533,7 +720,8 @@ def results():
         category_total_sum=category_total_sum,
         summary_data=summary_df_for_ui.to_dict(orient='records'),
         overtime_data=overtime_data,
-        weekly_overtime_data=weekly_overtime_data
+        weekly_overtime_data=weekly_overtime_data,
+        holidays=holidays
     )
 
 @app.route('/download_bulk/<report_type>')
@@ -567,7 +755,7 @@ def download_bulk_reports(report_type):
             author_df = global_df[global_df['Author'] == author].copy()
             
             if report_type == 'detailed':
-                output_df, _ = process_timesheet(author_df, global_base_url, selected_category, working_days)
+                output_df, _ = process_timesheet(author_df, global_base_url, selected_category, working_days, holidays)
                 # Clean sheet name (Excel has restrictions)
                 sheet_name = str(author)[:31].replace('/', '_').replace('\\', '_').replace('[', '').replace(']', '').replace('*', '').replace('?', '').replace(':', '')
                 output_df.to_excel(writer, index=False, sheet_name=sheet_name)
@@ -604,6 +792,9 @@ def download_report(report_type):
         working_days = working_days_param.split(',') if isinstance(working_days_param, str) else working_days_param
     else:
         working_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+
+    # Add this line to ensure holidays is defined
+    holidays = list(global_holidays)
     
     # Handle custom column selection - check if it's a custom column name directly
     if selected_category not in ['Activity', 'Label'] and selected_category != 'Activity':
@@ -624,7 +815,7 @@ def download_report(report_type):
 
     # Generate the requested file with category type
     if report_type == 'detailed':
-        output_df, _ = process_timesheet(display_df, global_base_url, selected_category, working_days)
+        output_df, _ = process_timesheet(display_df, global_base_url, selected_category, working_days, holidays)
         file_io = BytesIO()
         output_df.to_excel(file_io, index=False, sheet_name='Detailed Timesheet')
         file_io.seek(0)
@@ -650,8 +841,3 @@ def download_report(report_type):
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=5002)
-    
-# if __name__ == '__main__':
-#     local_ip = get_local_ip()
-#     print(f" * Running on http://{local_ip}:5000")
-#     app.run(host=local_ip, port=5000, debug=True)
