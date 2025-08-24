@@ -17,4 +17,6 @@ Sprint Closure Report – Download sprint closure details for better retrospecti
 
 User Filtering – Run reports for selected users only.
 
+OverTime Analytics – Check team overtime hours spent based on sprint or custom data.
+
 Visit: https://jiratotimesheetconverter.onrender.com/
