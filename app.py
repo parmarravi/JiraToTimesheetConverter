@@ -467,6 +467,48 @@ def process_summary(df, category_type="Activity", summary_type="Issue Summary"):
     
     return summary_df[['Category', 'Summary', 'Author', 'Issue Status', 'Total Efforts (hrs)']]
 
+def process_reverse_timesheet(df):
+    """
+    Process uploaded timesheet template and convert it back to Jira-like format for dashboard visualization.
+    Expects timesheet with columns: Time, Date, Application/Project Name, Activity/Task Done, Hours spent, Category, etc.
+    """
+    if df.empty:
+        return pd.DataFrame()
+    
+    # Map timesheet columns back to Jira format
+    reverse_df = pd.DataFrame()
+    
+    # Required mappings for dashboard visualization
+    reverse_df['Author'] = df.get('Author', 'Unknown')  # If Author column exists, use it
+    reverse_df['Start Date'] = pd.to_datetime(df['Date'], format='%d/%b/%Y', errors='coerce')
+    reverse_df['Time Spent (seconds)'] = df['Hours spent'] * 3600  # Convert hours back to seconds
+    reverse_df['Project Name'] = df.get('Application/Project Name', 'Unknown Project')
+    reverse_df['Comment'] = df.get('Activity/Task Done', '')
+    reverse_df['Issue Status'] = df.get('Status', 'Unknown')
+    
+    # Handle Category mapping (Labels or Activity)
+    if 'Category' in df.columns:
+        reverse_df['Labels'] = df['Category']
+        reverse_df['Activity'] = df['Category']
+    
+    # Generate synthetic Issue Key and Summary if not present
+    reverse_df['Issue Key'] = df.get('Ticket/Task #', '').apply(lambda x: x.split('/')[-1] if '/' in str(x) else f"TASK-{hash(str(x)) % 10000}")
+    reverse_df['Issue Summary'] = df.get('Activity/Task Done', 'Imported Task')
+    reverse_df['Parent Summary'] = reverse_df['Issue Summary']  # Use same for parent
+    
+    # Add estimation fields (set to 0 if not available)
+    reverse_df['Original Estimate (seconds)'] = 0
+    reverse_df['Remaining Estimate (seconds)'] = 0
+    
+    # Filter out holiday/leave entries for cleaner dashboard
+    reverse_df = reverse_df[~reverse_df['Comment'].isin(['Leave Day', '', 'Holiday'])]
+    reverse_df = reverse_df[reverse_df['Time Spent (seconds)'] > 0]
+    
+    # Clean up any NaN values
+    reverse_df = reverse_df.fillna('')
+    
+    return reverse_df
+
 def process_sprint_closure_report(df, summary_type="Issue Summary"):
     """
     Generates the data for the Sprint Closure Report.
@@ -628,6 +670,50 @@ def process_file_route():
     global_df = df
     global_authors = sorted(df['Author'].unique().tolist())
     global_base_url = request.form['base_url']
+    
+    # Redirect to the report page
+    return redirect(url_for('results'))
+
+@app.route('/process_reverse', methods=['POST'])
+def process_reverse_timesheet_route():
+    """
+    Handles reverse timesheet upload - converts timesheet template back to dashboard data.
+    """
+    global global_df, global_authors, global_base_url, original_filename
+    if 'file' not in request.files:
+        return "Missing timesheet file", 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return "No selected file", 400
+
+    original_filename = file.filename
+    try:
+        if original_filename.lower().endswith('.csv'):
+            timesheet_df = pd.read_csv(file)
+        else:
+            timesheet_df = pd.read_excel(file)
+    except Exception as e:
+        return f"Error reading timesheet file: {e}", 400
+    
+    # Validate timesheet format
+    required_columns = ['Date', 'Hours spent']
+    missing_columns = [col for col in required_columns if col not in timesheet_df.columns]
+    if missing_columns:
+        return f"Invalid timesheet format. Missing columns: {', '.join(missing_columns)}", 400
+    
+    # Process reverse timesheet
+    try:
+        df = process_reverse_timesheet(timesheet_df)
+        if df.empty:
+            return "No valid data found in timesheet", 400
+    except Exception as e:
+        return f"Error processing timesheet: {e}", 400
+    
+    # Store data globally
+    global_df = df
+    global_authors = sorted(df['Author'].unique().tolist()) if 'Author' in df.columns else ['Unknown']
+    global_base_url = "https://imported-timesheet/"  # Default base URL for imported data
     
     # Redirect to the report page
     return redirect(url_for('results'))
@@ -830,7 +916,6 @@ def download_bulk_reports(report_type):
             download_name=download_name,
             mimetype='application/zip'
         )
-
 
 @app.route('/download/<report_type>')
 def download_report(report_type):

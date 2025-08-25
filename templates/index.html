@@ -28,17 +28,36 @@
     
     <!-- Upload Form -->
     {% if not processed %}
-    <form action="{{ url_for('process_file_route') }}" method="post" enctype="multipart/form-data">
-        <div>
-            <label for="base_url">Jira Base URL:</label>
-            <input type="text" id="base_url" name="base_url" value="https://jiraLinkHere/browse/" required>
-        </div>
-        <div>
-            <label for="file">Select Timesheet File (CSV or Excel):</label>
-            <input type="file" id="file" name="file" required accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel">
-        </div>
-        <button type="submit">Process File</button>
-    </form>
+    <div class="upload-section">
+        <h3>📊 Process Jira Export</h3>
+        <form action="{{ url_for('process_file_route') }}" method="post" enctype="multipart/form-data">
+            <div>
+                <label for="base_url">Jira Base URL:</label>
+                <input type="text" id="base_url" name="base_url" value="https://jiraLinkHere/browse/" required>
+            </div>
+            <div>
+                <label for="file">Select Jira Export File (CSV or Excel):</label>
+                <input type="file" id="file" name="file" required accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel">
+            </div>
+            <button type="submit" style="background-color: #007bff;">Process Jira Export</button>
+        </form>
+    </div>
+
+    <div class="upload-section" style="margin-top: 30px; border-top: 2px solid #dee2e6; padding-top: 20px;">
+        <h3>🔄 Import Existing Timesheet</h3>
+        <p style="color: #6c757d; font-size: 0.9em;">Upload a previously generated timesheet to view dashboard analytics</p>
+        <form action="{{ url_for('process_reverse_timesheet_route') }}" method="post" enctype="multipart/form-data">
+            <div>
+                <label for="reverse_file">Select Timesheet Template (CSV or Excel):</label>
+                <input type="file" id="reverse_file" name="file" required accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel">
+            </div>
+            <button type="submit" style="background-color: #28a745;">Import Timesheet</button>
+        </form>
+        <small style="color: #6c757d; display: block; margin-top: 8px;">
+            <strong>Required columns:</strong> Date, Hours spent<br>
+            <strong>Optional columns:</strong> Author, Category, Activity/Task Done, Application/Project Name, Status
+        </small>
+    </div>
     {% endif %}
 
     <!-- Results Section -->
