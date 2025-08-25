@@ -293,14 +293,14 @@
 
 
                 <!-- Burnout Alert Section - Full Width -->
-                {% if burnout_data and burnout_data|length > 0 %}
+                <!-- {% if burnout_data and burnout_data|length > 0 %}
                 <div id="burnoutAlert" class="burnout-container" style="display: none;">
                     <h3>
                         <span style="font-size: 1.2em;">⚠️</span> Team Burnout Alert
                     </h3>                    
                     
                     <!-- Burnout Detection Methodology -->
-                    <div class="burnout-methodology">
+                    <!-- <div class="burnout-methodology">
                         <h5>
                             <span>📊</span> EMA Workload Strain Score Detection
                         </h5>
@@ -313,9 +313,9 @@
 
                     <h4>
                         🚨 Attention Required - Team Members at Risk
-                    </h4>
+                    </h4> -->
 
-                    <table class="burnout-table">
+                    <!-- <table class="burnout-table">
                         <thead>
                             <tr>
                                 <th>Employee</th>
@@ -347,10 +347,10 @@
                             </tr>
                             {% endfor %}
                         </tbody>
-                    </table>
+                    </table> -->
                     
                     <!-- Strain Score Visualization -->
-                    <div style="margin-top: 30px;">
+                    <!-- <div style="margin-top: 30px;">
                         <h4>📈 Workload Strain Score Trends</h4>
                         <p style="font-size: 0.9em; color: #6c757d; margin-bottom: 15px;">
                             This chart shows how the EMA smoothing algorithm tracks workload strain over time, combining current overtime with historical patterns.
@@ -364,19 +364,19 @@
                             <span style="display: inline-block; width: 15px; height: 15px; background: #fd7e14; margin: 0 5px 0 15px; border-radius: 2px;"></span>High Risk (8-12)
                             <span style="display: inline-block; width: 15px; height: 15px; background: #dc3545; margin: 0 5px 0 15px; border-radius: 2px;"></span>Critical (≥12)
                         </div>
-                    </div>
-                </div>
-                {% endif %}
+                    </div> -->
+                <!-- </div> -->
+                <!-- {% endif %} --> -->
 
                 <!-- Weekly Overtime Chart -->
-                {% if weekly_overtime_data and weekly_overtime_data.weeks %}
+                <!-- {% if weekly_overtime_data and weekly_overtime_data.weeks %}
                 <div id="overtimeChart" class="chart-container" style="display: none;">
                     <h3>Weekly Overtime Hours</h3>
                     <div style="position: relative; height: 250px;">
                         <canvas id="weeklyOvertimeChart"></canvas>
                     </div>
                 </div>
-                {% endif %}
+                {% endif %} -->
 
                 <!-- Overtime Breakdown -->
                 <div id="overtimeBreakdown" class="table-container" style="display: none;">
@@ -420,7 +420,7 @@
                         </tbody>
                     </table>
                 </div>
-    </div>
+         </div>
         <!-- Summary Table -->
         <div class="summary-container">
                 <h3>Summary Efforts Table</h3>
