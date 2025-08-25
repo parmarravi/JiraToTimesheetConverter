@@ -769,8 +769,8 @@ def results():
 @app.route('/download_bulk/<report_type>')
 def download_bulk_reports(report_type):
     """
-    Downloads bulk reports for all authors when filter is 'All'
-    Creates separate Excel sheets for each author
+    Downloads individual Excel files for each author as a ZIP archive
+    Creates separate Excel files for each author
     """
     if global_df is None:
         return redirect(url_for('index'))
@@ -785,32 +785,52 @@ def download_bulk_reports(report_type):
     else:
         working_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     
+    # Add holidays parameter
+    holidays = list(global_holidays)
+    
     # Get all unique authors
     all_authors = global_df['Author'].unique()
     
-    # Create a BytesIO buffer for the Excel file
-    file_io = BytesIO()
+    # Create a ZIP file containing individual Excel files
+    import zipfile
+    import tempfile
+    import os
     
-    with pd.ExcelWriter(file_io, engine='openpyxl') as writer:
-        for author in all_authors:
-            # Filter data for this author
-            author_df = global_df[global_df['Author'] == author].copy()
-            
-            if report_type == 'detailed':
-                output_df, _ = process_timesheet(author_df, global_base_url, selected_category, working_days, holidays)
-                # Clean sheet name (Excel has restrictions)
-                sheet_name = str(author)[:31].replace('/', '_').replace('\\', '_').replace('[', '').replace(']', '').replace('*', '').replace('?', '').replace(':', '')
-                output_df.to_excel(writer, index=False, sheet_name=sheet_name)
-    
-    file_io.seek(0)
-    download_name = f"bulk_timesheets_{len(all_authors)}_authors.xlsx"
-    
-    return send_file(
-        file_io,
-        as_attachment=True,
-        download_name=download_name,
-        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
+    # Create a temporary directory
+    with tempfile.TemporaryDirectory() as temp_dir:
+        zip_buffer = BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for author in all_authors:
+                # Filter data for this author
+                author_df = global_df[global_df['Author'] == author].copy()
+                
+                if report_type == 'detailed':
+                    output_df, _ = process_timesheet(author_df, global_base_url, selected_category, working_days, holidays)
+                    
+                    # Create individual Excel file for this author
+                    excel_buffer = BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                        output_df.to_excel(writer, index=False, sheet_name='Timesheet')
+                    
+                    # Clean author name for filename
+                    clean_author_name = str(author).replace('/', '_').replace('\\', '_').replace('[', '').replace(']', '').replace('*', '').replace('?', '').replace(':', '').replace('<', '').replace('>', '').replace('|', '')
+                    filename = f"{clean_author_name}_timesheet.xlsx"
+                    
+                    # Add the Excel file to ZIP
+                    excel_buffer.seek(0)
+                    zip_file.writestr(filename, excel_buffer.getvalue())
+        
+        zip_buffer.seek(0)
+        download_name = f"individual_timesheets_{len(all_authors)}_authors.zip"
+        
+        return send_file(
+            zip_buffer,
+            as_attachment=True,
+            download_name=download_name,
+            mimetype='application/zip'
+        )
+
 
 @app.route('/download/<report_type>')
 def download_report(report_type):
@@ -882,4 +902,4 @@ def download_report(report_type):
     )
 
 if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0', port=5002)
+    app.run(debug=True, host='0.0.0.0', port=5000)
