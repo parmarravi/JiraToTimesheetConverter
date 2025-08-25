@@ -468,17 +468,19 @@ def process_summary(df, category_type="Activity", summary_type="Issue Summary"):
     return summary_df[['Category', 'Summary', 'Author', 'Issue Status', 'Total Efforts (hrs)']]
 
 def process_sprint_closure_report(df, summary_type="Issue Summary"):
-    """Generates the data for the Sprint Closure Report."""
+    """
+    Generates the data for the Sprint Closure Report.
+    Fixed to properly calculate user-based efforts mapping.
+    """
     if df.empty:
         return BytesIO()
         
     df['Start Date'] = pd.to_datetime(df['Start Date'])
     df['Hours Spent'] = df['Time Spent (seconds)'] / 3600
 
-   # Estimation
+    # Convert estimation fields to hours
     df['Original Estimate'] = df['Original Estimate (seconds)'] / 3600
     df['Remaining Estimate'] = df['Remaining Estimate (seconds)'] / 3600
-
 
     # 1. Available Capacity
     weekdays_df = df[df['Start Date'].dt.weekday < 5].copy()
@@ -497,25 +499,65 @@ def process_sprint_closure_report(df, summary_type="Issue Summary"):
     burned_capacity.rename(columns={'Author': 'Developer'}, inplace=True)
 
     # 3. Features and Tech Debt - Handle summary type selection
-    # ✅ Use selected summary type (Issue Summary vs Parent Summary)
     if summary_type == "Parent Summary" and 'Parent Summary' in df.columns:
         summary_col = 'Parent Summary'
     else:
         summary_col = 'Issue Summary'  # Default fallback
     
-    # ✅ Group by Type of Work and Particular, then aggregate hours properly
-    features_df = df.groupby(['Labels', summary_col, 'Author']).agg({
-        'Original Estimate': 'sum',
-        'Remaining Estimate': 'sum',
+    # ✅ FIXED: Calculate user-based efforts mapping
+    # Group by Labels, Summary, and Author to get per-user task breakdown
+    user_task_summary = df.groupby(['Labels', summary_col, 'Author']).agg({
+        'Original Estimate': 'first',  # Take the original estimate for the task
+        'Hours Spent': 'sum',  # Sum actual hours spent by this user on this task
         'Issue Status': 'first'  # Take first status for grouped items
     }).reset_index()
     
-    features_df.rename(columns={'Labels': 'Type of Work', summary_col: 'Particular', 'Original Estimate':'Extimated efforts','Remaining Estimate':'Actual Effrots', 'Issue Status': 'Remark', 'Author': 'Resource Name'}, inplace=True)
-    features_df = features_df[['Type of Work', 'Particular', 'Resource Name', 'Extimated efforts',  'Actual Effrots', 'Remark']]
-       # ✅ Sort by Author (Resource Name) and then by Type of Work
-    features_df.sort_values(by=['Resource Name'], inplace=True)
-    features_df.reset_index(drop=True, inplace=True)
-    features_df.insert(0, 'Sr Number', features_df.index + 1)
+    # Now calculate estimated and actual efforts based on user participation
+    features_list = []
+    
+    # Group by Labels and Summary to get all tasks
+    for (label, summary), task_group in user_task_summary.groupby(['Labels', summary_col]):
+        # Get all users who worked on this task
+        users_on_task = task_group['Author'].tolist()
+        total_users = len(users_on_task)
+        
+        # Get the original estimate for this task (should be same for all users)
+        original_estimate = task_group['Original Estimate'].iloc[0]
+        
+        # For each user who worked on this task
+        for _, user_row in task_group.iterrows():
+            user = user_row['Author']
+            actual_hours = user_row['Hours Spent']
+            status = user_row['Issue Status']
+            
+            # Calculate estimated effort for this user:
+            # If multiple users worked on the task, split the estimate proportionally
+            # based on their actual contribution
+            total_actual_hours = task_group['Hours Spent'].sum()
+            if total_actual_hours > 0:
+                # Proportional allocation based on actual work done
+                user_estimated_effort = original_estimate * (actual_hours / total_actual_hours)
+            else:
+                # If no actual work logged, split estimate equally among users
+                user_estimated_effort = original_estimate / total_users if total_users > 0 else original_estimate
+            
+            features_list.append({
+                'Type of Work': label,
+                'Particular': summary,
+                'Resource Name': user,
+                'Extimated efforts': round(user_estimated_effort, 2),
+                'Actual Effrots': round(actual_hours, 2),
+                'Remark': status
+            })
+    
+    # Convert to DataFrame
+    features_df = pd.DataFrame(features_list)
+    
+    # Sort by Resource Name (Author) and then by Type of Work
+    if not features_df.empty:
+        features_df.sort_values(by=['Resource Name', 'Type of Work'], inplace=True)
+        features_df.reset_index(drop=True, inplace=True)
+        features_df.insert(0, 'Sr Number', features_df.index + 1)
 
 
     # Write to an in-memory Excel file
