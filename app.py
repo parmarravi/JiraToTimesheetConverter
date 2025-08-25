@@ -309,10 +309,10 @@ def process_timesheet(df, base_url, category_type="Activity", working_days=None,
 #     }
 
 def calculate_weekly_overtime(df, working_hours=8, working_days=None, holidays=None, author_filter="All"):
-    """Calculate weekly overtime hours for chart visualization (aligned with calculate_overtime_hours)"""
+    """Calculate weekly overtime hours and total efforts for chart visualization"""
 
     if df.empty:
-        return {'weeks': [], 'overtime_hours': [], 'date_ranges': []}
+        return {'weeks': [], 'overtime_hours': [], 'total_hours': [], 'actual_hours': [], 'date_ranges': []}
 
     if working_days is None:
         working_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
@@ -336,7 +336,10 @@ def calculate_weekly_overtime(df, working_hours=8, working_days=None, holidays=N
 
     # Group week by week
     for (week_key, week_start, week_end), week_df in df.groupby(['WeekKey', 'Week_Start', 'Week_End']):
-        # 👇 Reuse your existing overtime calculation
+        # Calculate total hours for the week
+        total_hours = week_df['Hours spent'].sum()
+        
+        # Calculate overtime hours
         overtime_summary = calculate_overtime_hours(
             week_df,
             leave_days=0,
@@ -347,12 +350,16 @@ def calculate_weekly_overtime(df, working_hours=8, working_days=None, holidays=N
         )
 
         total_overtime = overtime_summary['total_overtime']
+        actual_hours = total_hours - total_overtime
 
-        if total_overtime > 0:
+        # Include all weeks with any hours worked
+        if total_hours > 0:
             date_range = f"{week_start.strftime('%d/%m/%Y')} - {week_end.strftime('%d/%m/%Y')}"
             weekly_data.append({
                 'week': week_key,
                 'overtime_hours': round(total_overtime, 2),
+                'total_hours': round(total_hours, 2),
+                'actual_hours': round(max(0, actual_hours), 2),
                 'date_range': date_range
             })
 
@@ -362,9 +369,149 @@ def calculate_weekly_overtime(df, working_hours=8, working_days=None, holidays=N
     return {
         'weeks': [item['week'] for item in weekly_data],
         'overtime_hours': [item['overtime_hours'] for item in weekly_data],
+        'total_hours': [item['total_hours'] for item in weekly_data],
+        'actual_hours': [item['actual_hours'] for item in weekly_data],
         'date_ranges': [item['date_range'] for item in weekly_data]
     }
 
+
+def calculate_weekly_overtime_for_author(df, working_hours=8, working_days=None, holidays=None):
+    """
+    A helper function to calculate overtime for a given weekly dataframe.
+    Returns overtime per author for EMA calculation.
+    """
+    if df.empty:
+        return {}
+    
+    if working_days is None:
+        working_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    if holidays is None:
+        holidays = []
+    
+    overtime_per_author = {}
+    for author in df['Author'].unique():
+        author_df = df[df['Author'] == author]
+        
+        # Calculate detailed overtime using existing function
+        overtime_data = calculate_overtime_hours(
+            author_df, 0, 0, working_hours, working_days, holidays
+        )
+        
+        total_overtime = overtime_data['total_overtime']
+        overtime_per_author[author] = max(0, total_overtime)  # Ensure overtime is not negative
+        
+    return overtime_per_author
+
+
+def update_burnout_risk_scores(current_df, historical_scores=None, smoothing_factor=0.4, working_hours=8, working_days=None, holidays=None):
+    """
+    Updates the burnout risk scores based on the current data and historical scores using EMA.
+    Returns the updated scores and a list of current burnout cases.
+    """
+    if current_df.empty:
+        return {}, []
+    
+    if historical_scores is None:
+        historical_scores = {}
+    
+    # 1. Calculate overtime for the current period
+    current_overtime = calculate_weekly_overtime_for_author(current_df, working_hours, working_days, holidays)
+    
+    updated_scores = historical_scores.copy()
+    all_authors = set(list(historical_scores.keys()) + list(current_overtime.keys()))
+
+    burnout_cases = []
+
+    for author in all_authors:
+        # 2. Get previous score and current overtime
+        previous_score = historical_scores.get(author, 0)
+        current_overtime_hours = current_overtime.get(author, 0)  # 0 overtime if they didn't log time
+
+        # 3. Apply the EMA formula to calculate the new score
+        new_score = (current_overtime_hours * smoothing_factor) + (previous_score * (1 - smoothing_factor))
+        updated_scores[author] = new_score
+
+        # 4. Determine burnout level based on the NEW score and thresholds
+        burnout_level = "Low"
+        message = ""
+        
+        if new_score >= 12:  # Critical threshold
+            burnout_level = "Critical"
+            message = f"🔴 CRITICAL: {author}'s workload strain score is {new_score:.1f}, indicating sustained high overtime."
+        elif new_score >= 8:  # High risk threshold
+            burnout_level = "High"
+            message = f"🟠 HIGH RISK: {author}'s workload strain score is {new_score:.1f}. Monitor closely."
+        elif new_score >= 5:  # Moderate threshold
+            burnout_level = "Moderate"
+            message = f"🟡 MODERATE: {author}'s workload strain score is {new_score:.1f}. Recent overtime is increasing risk."
+        
+        if burnout_level != "Low":
+            # Get detailed overtime breakdown for display
+            author_df = current_df[current_df['Author'] == author]
+            if not author_df.empty:
+                overtime_data = calculate_overtime_hours(
+                    author_df, 0, 0, working_hours, working_days, holidays
+                )
+                total_hours = (author_df['Time Spent (seconds)'] / 3600).sum()
+                overtime_percentage = (current_overtime_hours / total_hours * 100) if total_hours > 0 else 0
+            else:
+                overtime_data = {'weekend_hours': 0, 'daily_overtime': 0, 'holiday_overtime': 0}
+                total_hours = 0
+                overtime_percentage = 0
+            
+            burnout_cases.append({
+                'author': author,
+                'workload_strain_score': new_score,
+                'current_overtime': current_overtime_hours,
+                'total_overtime': current_overtime_hours,  # For template compatibility
+                'total_hours': total_hours,
+                'overtime_percentage': overtime_percentage,
+                'burnout_level': burnout_level,
+                'message': message,
+                'weekend_hours': overtime_data['weekend_hours'],
+                'daily_overtime': overtime_data['daily_overtime'],
+                'holiday_overtime': overtime_data['holiday_overtime']
+            })
+
+    # Sort by the new strain score
+    burnout_cases.sort(key=lambda x: x['workload_strain_score'], reverse=True)
+    
+    return updated_scores, burnout_cases
+
+
+def detect_burnout(df, working_hours=8, working_days=None, holidays=None, burnout_threshold=10):
+    """
+    Detect team members who are experiencing burnout using EMA Workload Strain Score.
+    Returns a list of burnout cases with details.
+    """
+    if df.empty:
+        return []
+    
+    # For now, we'll use a simple historical scores simulation
+    # In a real application, this would be stored in a database
+    # and retrieved/updated with each analysis
+    
+    # Simulate some historical scores (in production, load from storage)
+    historical_scores = {}
+    for author in df['Author'].unique():
+        # Initialize with a baseline score based on current data patterns
+        author_df = df[df['Author'] == author]
+        if not author_df.empty:
+            current_overtime_data = calculate_overtime_hours(
+                author_df, 0, 0, working_hours, working_days, holidays
+            )
+            # Start with 70% of current overtime as historical baseline
+            historical_scores[author] = current_overtime_data['total_overtime'] * 0.7
+    
+    # Use EMA-based burnout detection
+    updated_scores, burnout_cases = update_burnout_risk_scores(
+        df, historical_scores, smoothing_factor=0.4, 
+        working_hours=working_hours, working_days=working_days, holidays=holidays
+    )
+    
+    # In production, save updated_scores back to storage here
+    
+    return burnout_cases
 
 def calculate_overtime_hours(df, leave_days=0, holiday_days=0, working_hours=8, working_days=None, holidays=None):
     """
@@ -830,6 +977,9 @@ def results():
     # Calculate weekly overtime data for chart
     weekly_overtime_data = calculate_weekly_overtime(display_df.copy(), working_hours, working_days, holidays)
     
+    # Calculate burnout detection using EMA Workload Strain Score
+    burnout_data = detect_burnout(display_df.copy(), working_hours, working_days, holidays, burnout_threshold=10)
+    
     # Calculate category total sum
     category_total_sum = category_totals_df['Hours spent'].sum() if not category_totals_df.empty else 0
 
@@ -849,6 +999,7 @@ def results():
         summary_data=summary_df_for_ui.to_dict(orient='records'),
         overtime_data=overtime_data,
         weekly_overtime_data=weekly_overtime_data,
+        burnout_data=burnout_data,
         holidays=holidays
     )
 

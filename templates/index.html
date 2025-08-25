@@ -12,7 +12,8 @@
         window.serverData = {
             holidays: {{ holidays | default([]) | tojson | safe }},
             weeklyOvertimeData: {{ weekly_overtime_data | default(None) | tojson | safe }},
-            categoryData: {{ category_totals | default([]) | tojson | safe }}
+            categoryData: {{ category_totals | default([]) | tojson | safe }},
+            burnoutData: {{ burnout_data | default([]) | tojson | safe }}
         };
     </script>
 
@@ -253,41 +254,119 @@
 
             <button type="submit">Apply Filters</button>
     </form>
-        <div class="results-container">
-                <!-- Category Summary Table -->
-                <div class="table-container">
-                    <h3>Total Hours per Category</h3>
-                    <table>
+        <div class="results-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start;">
+               
+             <!-- Category Summary Table -->
+             <div class="table-container">
+                <h3>Total Hours per Category</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Total Hours</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if category_totals %}
+                            {% for item in category_totals %}
+                            <tr {% if item['Category'] == 'No Label/Empty' %}class="no-label-row"{% endif %}>
+                                <td>{{ item['Category'] }}</td>
+                                <td>{{ "%.2f"|format(item['Hours spent']) }}</td>
+                            </tr>
+                            {% endfor %}
+                            <tr style="background-color: #e9ecef; font-weight: bold; border-top: 2px solid #007bff;">
+                                <td><strong>Total</strong></td>
+                                <td><strong>{{ "%.2f"|format(category_total_sum) }}</strong></td>
+                            </tr>
+                        {% else %}
+                            <tr><td colspan="2">No data for this selection.</td></tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Category Pie Chart -->
+            <div class="table-container">
+                <h3>Category vs Total Hours</h3>
+                <canvas id="categoryPieChart"></canvas>
+            </div>
+
+
+                <!-- Burnout Alert Section - Full Width -->
+                {% if burnout_data and burnout_data|length > 0 %}
+                <div id="burnoutAlert" class="burnout-container" style="display: none;">
+                    <h3>
+                        <span style="font-size: 1.2em;">⚠️</span> Team Burnout Alert
+                    </h3>                    
+                    
+                    <!-- Burnout Detection Methodology -->
+                    <div class="burnout-methodology">
+                        <h5>
+                            <span>📊</span> EMA Workload Strain Score Detection
+                        </h5>
+                        <p><strong>Detection Method:</strong> Exponential Moving Average (EMA) tracks sustained overtime patterns over time</p>
+                        <p><strong>Risk Levels:</strong> Critical (≥12 strain score), High Risk (≥8 strain score), Moderate (≥5 strain score)</p>
+                        <p><strong>Strain Score:</strong> Combines current overtime with historical patterns using smoothing factor 0.4</p>
+                        <p><strong>Overtime includes:</strong> Weekend work, daily hours >8h, holiday work</p>
+                    </div>
+
+
+                    <h4>
+                        🚨 Attention Required - Team Members at Risk
+                    </h4>
+
+                    <table class="burnout-table">
                         <thead>
                             <tr>
-                                <th>Category</th>
-                                <th>Total Hours</th>
+                                <th>Employee</th>
+                                <th>Strain Score</th>
+                                <th>Weekend Hours</th>
+                                <th>Daily OT Hours</th>
+                                <th>Holiday Hours</th>
+                                <th>Current OT Hours</th>
+                                <th>Total Work Hours</th>
+                                <th>Risk Level</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {% if category_totals %}
-                                {% for item in category_totals %}
-                                <tr {% if item['Category'] == 'No Label/Empty' %}class="no-label-row"{% endif %}>
-                                    <td>{{ item['Category'] }}</td>
-                                    <td>{{ "%.2f"|format(item['Hours spent']) }}</td>
-                                </tr>
-                                {% endfor %}
-                                <tr style="background-color: #e9ecef; font-weight: bold; border-top: 2px solid #007bff;">
-                                    <td><strong>Total</strong></td>
-                                    <td><strong>{{ "%.2f"|format(category_total_sum) }}</strong></td>
-                                </tr>
-                            {% else %}
-                                <tr><td colspan="2">No data for this selection.</td></tr>
-                            {% endif %}
+                            {% for employee in burnout_data %}
+                            <tr class="{% if employee.workload_strain_score >= 12 %}risk-critical{% elif employee.workload_strain_score >= 8 %}risk-high{% else %}risk-moderate{% endif %}">
+                                <td>{{ employee.author }}</td>
+                                <td><strong>{{ "%.1f"|format(employee.workload_strain_score) }}</strong></td>
+                                <td>{{ "%.1f"|format(employee.weekend_hours) }}</td>
+                                <td>{{ "%.1f"|format(employee.daily_overtime) }}</td>
+                                <td>{{ "%.1f"|format(employee.holiday_overtime) }}</td>
+                                <td><strong>{{ "%.1f"|format(employee.current_overtime) }}</strong></td>
+                                <td>{{ "%.1f"|format(employee.total_hours) }}</td>
+                                <td>
+                                    {% if employee.workload_strain_score >= 12 %}<strong>🔴 Critical</strong>
+                                    {% elif employee.workload_strain_score >= 8 %}<strong>🟡 High Risk</strong>
+                                    {% else %}<strong>🟠 Moderate</strong>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
                         </tbody>
                     </table>
+                    
+                    <!-- Strain Score Visualization -->
+                    <div style="margin-top: 30px;">
+                        <h4>📈 Workload Strain Score Trends</h4>
+                        <p style="font-size: 0.9em; color: #6c757d; margin-bottom: 15px;">
+                            This chart shows how the EMA smoothing algorithm tracks workload strain over time, combining current overtime with historical patterns.
+                        </p>
+                        <div style="position: relative; height: 400px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px;">
+                            <canvas id="strainScoreChart"></canvas>
+                        </div>
+                        <div style="margin-top: 10px; font-size: 0.85em; color: #6c757d; text-align: center;">
+                            <span style="display: inline-block; width: 15px; height: 15px; background: #28a745; margin-right: 5px; border-radius: 2px;"></span>Safe (< 5)
+                            <span style="display: inline-block; width: 15px; height: 15px; background: #ffc107; margin: 0 5px 0 15px; border-radius: 2px;"></span>Moderate (5-8)
+                            <span style="display: inline-block; width: 15px; height: 15px; background: #fd7e14; margin: 0 5px 0 15px; border-radius: 2px;"></span>High Risk (8-12)
+                            <span style="display: inline-block; width: 15px; height: 15px; background: #dc3545; margin: 0 5px 0 15px; border-radius: 2px;"></span>Critical (≥12)
+                        </div>
+                    </div>
                 </div>
-
-                <!-- Category Pie Chart -->
-                <div class="table-container">
-                    <h3>Category vs Total Hours</h3>
-                    <canvas id="categoryPieChart"></canvas>
-                </div>
+                {% endif %}
 
                 <!-- Weekly Overtime Chart -->
                 {% if weekly_overtime_data and weekly_overtime_data.weeks %}
@@ -371,14 +450,12 @@
                             </tr>
                             {% endfor %}
                         {% else %}
-                            <tr><td colspan="5">No data for this selection.</td></tr>
+                            <tr><td colspan="5">No data available.</td></tr>
                         {% endif %}
                     </tbody>
-                </table>
+                </div>
     </div>
     {% endif %}
 </div>
-</body>
-</html>
 </body>
 </html>

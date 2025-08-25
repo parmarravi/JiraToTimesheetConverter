@@ -148,9 +148,83 @@ button:hover,
   overflow-x: auto;
 }
 
+.burnout-container {
+  overflow-x: auto;
+  background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+  border: 2px solid #ffc107;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+  grid-column: 1 / -1;
+}
+
+.burnout-container h3 {
+  color: #856404;
+  margin-top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.burnout-methodology {
+  background: #e8f4f8;
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 15px;
+  border-left: 4px solid #17a2b8;
+}
+
+.burnout-methodology h5 {
+  color: #0c5460;
+  margin: 0 0 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.burnout-methodology p {
+  margin: 4px 0;
+  color: #0c5460;
+  font-size: 0.9em;
+}
+
+.burnout-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+.burnout-table th,
+.burnout-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.burnout-table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+  color: #495057;
+}
+
+.burnout-table .risk-critical {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.burnout-table .risk-high {
+  background-color: #fff3cd;
+  color: #856404;
+}
+
+.burnout-table .risk-moderate {
+  background-color: #d1ecf1;
+  color: #0c5460;
+}
+
 .summary-container {
   overflow-x: auto;
-  margin-top: 30px;
+  margin-top: 50px;
   width: 100%;
 }
 
