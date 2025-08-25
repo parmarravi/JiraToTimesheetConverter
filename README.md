@@ -1,26 +1,99 @@
-📊 Jira Timesheet Utils
-Automate Jira worklog management and reporting.
-Easily upload worklogs of Jira and download timesheets, summary reports, and sprint closure reports — all based on specific users.
+# Jira Timesheet Utils  
 
-<img width="1347" height="489" alt="Screenshot 2025-08-13 at 11 26 32 PM" src="https://github.com/user-attachments/assets/a6ca8e0f-a876-4141-a3bc-e467c6b6b8d9" />
+A lightweight utility to simplify **time tracking and reporting in Jira**.  
+It extends Jira’s native timesheet features with **bulk uploads, detailed reports, and overtime analytics**—helping teams and managers save time and gain clarity.  
 
-🚀 Features
-Worklog Upload – Bulk upload worklogs of Jira directly in xlsx.
+---
 
-Timesheet Download – Fetch detailed user-wise timesheets for any date range.
+## ✨ Features  
 
-Summary Report – Generate concise user activity summaries.
+1. **Bulk Worklog Upload**  
+   - Upload multiple worklogs at once from an XLSX file.  
 
-Sprint Closure Report – Download sprint closure details for better retrospectives.
+2. **User-Specific Timesheets**  
+   - Download timesheets for a single user or the whole team within any date range.  
 
-User Filtering – Run reports for selected users only.
+3. **Detailed Reports**  
+   - Generate sprint closure reports, project summaries, or custom period overviews.  
 
-<img width="1224" height="623" alt="Screenshot 2025-08-25 at 6 27 16 AM" src="https://github.com/user-attachments/assets/45521f65-f810-4c75-98bd-a450292005a8" />
+4. **User Filtering**  
+   - Filter reports by specific team members for focused insights.  
 
-OverTime Analytics – Check team overtime hours spent based on sprint or custom data.
+5. **Overtime Analytics**  
+   - Identify weekly or sprint-based overtime to track capacity and avoid burnout.  
 
-<img width="1180" height="733" alt="Screenshot 2025-08-25 at 6 26 13 AM" src="https://github.com/user-attachments/assets/0c26b88b-6608-497a-a239-f8989e2c9a7b" />
+---
 
-<img width="1238" height="378" alt="Screenshot 2025-08-25 at 6 27 32 AM" src="https://github.com/user-attachments/assets/a4c618cf-95d9-43ba-920c-3aac4b168faa" />
+## 📊 Why Use This Tool?  
+
+- **Faster reporting** compared to Jira’s built-in tools.  
+- **No plugins required** — self-hosted and lightweight.  
+- **Excel-first approach** makes it easy to share and analyze data.  
+- **Manager-friendly**: great for retrospectives, contractor billing, and team reviews.  
+
+---
+
+## 🚀 Getting Started  
+
+### 1. Clone the repository  
+```
+git clone https://github.com/parmarravi/JiraToTimesheetConverter.git
+cd JiraToTimesheetConverter
+```
+2. Install dependencies
+```Copy
+pip install -r requirements.txt
+```
+3. Configure settings
+Update your Jira connection details in the configuration file (see example in repo).
+
+4. Run the app
+```
+python app.py
+```
+5. Open in your browser:
+```
+http://localhost:5002
+```
+
+
+🖼️ Screenshots
+
+| | |
+|---|---|
+| <img src="https://github.com/user-attachments/assets/a6ca8e0f-a876-4141-a3bc-e467c6b6b8d9" width="400"/> | <img src="https://github.com/user-attachments/assets/45521f65-f810-4c75-98bd-a450292005a8" width="400"/> |
+| <img src="https://github.com/user-attachments/assets/0c26b88b-6608-497a-a239-f8989e2c9a7b" width="400"/> | <img src="https://github.com/user-attachments/assets/a4c618cf-95d9-43ba-920c-3aac4b168faa" width="400"/> |
+
+
+📂 Example Workflows
+
+1. Bulk Worklog Upload → Import worklogs from an Excel file instead of manual entry.
+
+2. Weekly Team Report → Download a consolidated XLSX with team activity and capacity.
+
+3. Overtime Monitoring → Track where overtime is spent across categories or projects.
+
+🔍 Roadmap
+
+ 1. Export reports in CSV and PDF
+
+ 2. Schedule automatic report generation
+
+ 3. Integrations with Slack / Teams for notifications
+
+ 4. Enhanced error handling and logs
+
+🤝 Contributing
+Contributions are welcome!
+
+Fork the repository
+
+Create a feature branch
+
+Submit a pull request
+
+📜 License
+MIT License
+
 
 Visit: https://jiratotimesheetconverter.onrender.com/
