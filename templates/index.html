@@ -4,223 +4,610 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Jira Timesheet Processor</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            line-height: 1.6;
-            background-color: #f8f9fa;
-            color: #212529;
-            margin: 0;
-            padding: 20px;
-        }
-        .main-container {
-            max-width: 1200px;
-            margin: 20px auto;
-            padding: 25px;
-            background: #ffffff;
-            border-radius: 8px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.05);
-        }
-        h2, h3 {
-            color: #0056b3;
-            border-bottom: 2px solid #e9ecef;
-            padding-bottom: 10px;
-            margin-top: 0;
-        }
-        form div {
-            margin-bottom: 15px;
-        }
-        label {
-            display: block;
-            font-weight: 600;
-            margin-bottom: 5px;
-        }
-        input[type="text"], input[type="file"] {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ced4da;
-            border-radius: 4px;
-            box-sizing: border-box;
-        }
-        button, .button-link {
-            background-color: #007bff;
-            color: white !important;
-            padding: 12px 20px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-            transition: background-color 0.2s;
-            margin-right: 10px;
-            margin-top: 10px;
-            text-decoration: none;
-            display: inline-block;
-        }
-        button:hover, .button-link:hover {
-            background-color: #0056b3;
-        }
-        .filter-form {
-            background-color: #e9ecef;
-            padding: 15px;
-            border-radius: 5px;
-            margin-top: 20px;
-        }
-        .filter-form .radio-group {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-        }
-        .filter-form label {
-            margin-right: 20px;
-            font-weight: normal;
-        }
-        .filter-form button {
-            background-color: #28a745;
-        }
-        .filter-form button:hover {
-            background-color: #218838;
-        }
-        .results-container {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
-            gap: 30px;
-            margin-top: 30px;
-        }
-        .table-container {
-            overflow-x: auto;
-        }
-        table {
-            border-collapse: collapse;
-            width: 100%;
-            margin-top: 15px;
-        }
-        th, td {
-            border: 1px solid #dee2e6;
-            padding: 12px;
-            text-align: left;
-        }
-        th {
-            background-color: #e9ecef;
-            font-weight: 600;
-        }
-        tbody tr:nth-child(odd) {
-            background-color: #f8f9fa;
-        }
-        /* Style for completed tasks */
-        .status-done {
-            background-color: #d4edda !important;
-            color: #155724;
-        }
-    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+     <!-- Server-injected config -->
+    <script>
+        window.serverData = {
+            holidays: {{ holidays | default([]) | tojson | safe }},
+            weeklyOvertimeData: {{ weekly_overtime_data | default(None) | tojson | safe }},
+            categoryData: {{ category_totals | default([]) | tojson | safe }},
+            burnoutData: {{ burnout_data | default([]) | tojson | safe }}
+        };
+    </script>
+
+    <!-- App styles -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+
+    <!-- App scripts -->
+    <script defer src="{{ url_for('static', filename='js/main.js') }}"></script>
+    
 </head>
 <body>
-
 <div class="main-container">
     <h2>Upload Jira Timesheet</h2>
     
-    <!-- Show upload form if no file has been processed yet -->
+    <!-- Upload Form -->
     {% if not processed %}
-    <form action="{{ url_for('process_file_route') }}" method="post" enctype="multipart/form-data">
-        <div>
-            <label for="base_url">Jira Base URL:</label>
-            <input type="text" id="base_url" name="base_url" value="https://mahindra-adc.atlassian.net/browse/" required>
-        </div>
-        <div>
-            <label for="file">Select Timesheet File (CSV or Excel):</label>
-            <input type="file" id="file" name="file" required accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel">
-        </div>
-        <button type="submit">Process File</button>
-    </form>
-    {% endif %}
+    <div class="upload-section">
+        <h3>📊 Process Jira Export</h3>
+        <form action="{{ url_for('process_file_route') }}" method="post" enctype="multipart/form-data">
 
-    <!-- Show results and filters if a file has been processed -->
-    {% if processed %}
-    <a href="{{ url_for('index') }}" class="button-link" style="background-color:#6c757d;">Upload New File</a>
-    <hr style="margin-top: 25px;">
-    
-    <!-- Author Filter Form -->
-    <form action="{{ url_for('results') }}" method="get" class="filter-form">
-        <h3>Filter Report by Author</h3>
-        <div class="radio-group">
-            <label>
-                <input type="radio" name="author" value="All" {% if selected_author == 'All' %}checked{% endif %}>
-                All
-            </label>
-            {% for author in authors %}
-            <label>
-                <input type="radio" name="author" value="{{ author }}" {% if selected_author == author %}checked{% endif %}>
-                {{ author }}
-            </label>
-            {% endfor %}
-            <button type="submit">Filter</button>
-        </div>
-    </form>
-
-    <div class="download-buttons">
-        <h3>Download Reports for: <span style="color: #dc3545;">{{ selected_author }}</span></h3>
-        <a href="{{ url_for('download_report', report_type='detailed', author=selected_author) }}" class="button-link">Download Detailed Timesheet</a>
-        <a href="{{ url_for('download_report', report_type='summary', author=selected_author) }}" class="button-link">Download Summary Report</a>
-        <a href="{{ url_for('download_report', report_type='sprint_closure', author=selected_author) }}" class="button-link">Download Sprint Closure Report</a>
+            <div>
+                <label for="base_url">Jira Base URL:</label>
+                <input type="text" id="base_url" name="base_url" value="https://jiraLinkHere/browse/" required>
+            </div>
+            <div>
+                <label for="file">Select Jira Export File (CSV or Excel):</label>
+                <input type="file" id="file" name="file" required accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel">
+            </div>
+            <button type="submit" style="background-color: #007bff;">Process Jira Export</button>
+        </form>
     </div>
 
-    <div class="results-container">
-        <div class="table-container">
-            <h3>Total Hours per Category</h3>
-            <table>
+    <div class="upload-section" style="margin-top: 30px; border-top: 2px solid #dee2e6; padding-top: 20px;">
+        <h3>🔄 Import Existing Timesheet</h3>
+        <p style="color: #6c757d; font-size: 0.9em;">Upload a previously generated timesheet to view dashboard analytics</p>
+        <form action="{{ url_for('process_reverse_timesheet_route') }}" method="post" enctype="multipart/form-data">
+            <div>
+                <label for="reverse_file">Select Timesheet Template (CSV or Excel):</label>
+                <input type="file" id="reverse_file" name="file" required accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel">
+            </div>
+            <button type="submit" style="background-color: #28a745;">Import Timesheet</button>
+        </form>
+        <small style="color: #6c757d; display: block; margin-top: 8px;">
+            <strong>Required columns:</strong> Date, Hours spent<br>
+            <strong>Optional columns:</strong> Author, Category, Activity/Task Done, Application/Project Name, Status
+        </small>
+    </div>
+    {% endif %}
+
+    <!-- Results Section -->
+    {% if processed %}
+        <a href="{{ url_for('index') }}"  class="button-link" style="background-color:#6c757d;">Upload New File</a>
+
+        <form action="{{ url_for('reportToolbar') }}" method="POST" enctype="multipart/form-data" class="filter-form">
+            <div class="project-row">
+                <!-- Project Name -->
+                <div class="project-name-container">
+                    <label for="project_name">Project Name:</label>
+                    <input type="text" id="project_name" name="project_name" value="{{ project_name }}" placeholder="Enter project name" required>
+                </div>
+
+                <!-- Logo Upload Button -->
+                <div class="logo-upload-container">
+                    <label for="project_logo" class="upload-btn">Upload Logo</label>
+                    <input type="file" id="project_logo" name="project_logo" accept="image/*">
+                </div>
+            </div>
+
+            <div class="date-range-container">
+                <label for="start_date">Start Date:</label>
+                <input type="date" id="start_date" name="start_date" value="{{ session.get('start_date', start_date) }}">
+                <label for="end_date">End Date:</label>
+                <input type="date" id="end_date" name="end_date" value="{{ session.get('end_date', end_date) }}">
+            </div>
+
+              <!-- Key Insights Text Area -->
+            <div class="key-insights-container">
+                <label for="key_insights">Key Insights:</label>
+                <textarea id="key_insights" name="key_insights" placeholder="Enter key insights here...">{{ key_insights }}</textarea>
+            </div>
+
+            <!-- Submit Button -->
+            <button type="submit">Update</button>
+        </form>
+
+        <hr style="margin-top: 25px;">
+        <div>
+           
+            <form action="{{ url_for('results') }}" method="get"  class="filter-form" onsubmit="preserveOvertimeState()">
+                
+                <h3>Filter Report</h3>
+
+
+                <!-- Author filter -->
+                <div class="radio-group">
+                    <h4>Select Author</h4>
+                    <label>
+                        <input type="radio" name="author" value="All" {% if selected_author == 'All' %}checked{% endif %}>
+                        All
+                    </label>
+                    {% for author in authors %}
+                    <label>
+                        <input type="radio" name="author" value="{{ author }}" {% if selected_author == author %}checked{% endif %}>
+                        {{ author }}
+                    </label>
+                    {% endfor %}
+                </div>
+
+                <!-- Category Type filter -->
+                <div class="radio-group" style="margin-top:15px;">
+                    <h4>Select Category Type</h4>
+                    <label>
+                        <input type="radio" name="category_type" value="Activity" {% if selected_category == 'Activity' or not selected_category %}checked{% endif %} onchange="toggleCustomInput()">
+                        Activity
+                    </label>
+                    <label>
+                        <input type="radio" name="category_type" value="Label" {% if selected_category == 'Label' %}checked{% endif %} onchange="toggleCustomInput()">
+                        Label
+                    </label>
+                    <label>
+                        <input type="radio" name="category_type" value="Custom" {% if selected_category not in ['Activity', 'Label'] and selected_category %}checked{% endif %} onchange="toggleCustomInput()">
+                        Custom Column:
+                    </label>
+                    <input type="text" name="custom_column" id="customColumnInput" placeholder="Enter column name" 
+                        value="{% if selected_category not in ['Activity', 'Label'] %}{{ selected_category }}{% endif %}"
+                        style="margin-left: 10px; padding: 5px; border: 1px solid #ced4da; border-radius: 4px; width: 150px;"
+                        {% if selected_category in ['Activity', 'Label'] or not selected_category %}disabled{% endif %}>
+                </div>
+
+                <!-- Summary Type filter -->
+                <div class="radio-group" style="margin-top:15px;">
+                    <h4>Select Summary Type</h4>
+                    <label>
+                        <input type="radio" name="summary_type" value="Issue Summary" {% if selected_summary_type == 'Issue Summary' or not selected_summary_type %}checked{% endif %}>
+                        Issue Summary
+                    </label>
+                    <label>
+                        <input type="radio" name="summary_type" value="Parent Summary" {% if selected_summary_type == 'Parent Summary' %}checked{% endif %}>
+                        Parent Summary
+                    </label>
+                </div>
+
+                <!-- Capacity Table Toggle -->
+                <div style="margin-top:15px;">
+                    <label style="display:flex; align-items:center; gap:15px; font-weight:bold; color:#495057;">
+                        <span style="font-size:1.1em;">👥 Show Available Capacity</span>
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="showCapacityUI" onchange="toggleCapacityUI()">
+                            <span class="slider"></span>
+                        </div>
+                    </label>
+                </div>
+
+
+                <!-- Overtime UI Toggle -->
+                <div style="margin-top:15px;">
+                    <label style="display: flex; align-items: center; gap: 15px; font-weight: bold; color: #495057;">
+                        <span style="font-size: 1.1em;">📊 Show Overtime Analysis</span>
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="showOvertimeUI" onchange="toggleOvertimeUI()">
+                            <span class="slider"></span>
+                        </div>
+                    </label>
+                </div>
+
+        
+                <!-- Overtime Calculation Settings Toggle -->
+                <div id="overtimeSettingsToggle" style="margin-top:15px; display: none;">
+                    <button type="button" onclick="toggleOvertimeSettings()" style="background: linear-gradient(135deg, #abd4e7 0%, #0077ff 100%); color: #856404; border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 4px rgba(255, 193, 7, 0.3); transition: all 0.3s ease;">
+                        <span style="font-size: 1.2em;">⚙️</span> 
+                        <span id="overtimeToggleText">Show Overtime Calculation Settings</span>
+                        <span id="overtimeToggleIcon" style="font-size: 0.8em;">▼</span>
+                    </button>
+                </div>
+
+                <!-- Overtime Calculation Settings -->
+                <div id="overtimeSettingsPanel" style="display: none; margin-top:10px; background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); padding: 20px; border-radius: 8px; border: 2px solid #ffc107; box-shadow: 0 4px 8px rgba(255, 193, 7, 0.2);">
+                    <h4 style="color: #856404; margin-top: 0; display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 1.2em;">⚙️</span> Overtime Calculation Settings
+                    </h4>
+                    
+                    <!-- Working Days Selection -->
+                    <div style="margin-bottom: 15px;">
+                        <h5 style="margin-bottom: 8px; color: #495057;">Working Days:</h5>
+                        <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
+                            {% set default_working_days = working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] %}
+                            <label style="display: flex; align-items: center; gap: 5px;">
+                                <input type="checkbox" name="working_days" value="Monday" 
+                                    {% if 'Monday' in default_working_days %}checked{% endif %}>
+                                Mon
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 5px;">
+                                <input type="checkbox" name="working_days" value="Tuesday" 
+                                    {% if 'Tuesday' in default_working_days %}checked{% endif %}>
+                                Tue
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 5px;">
+                                <input type="checkbox" name="working_days" value="Wednesday" 
+                                    {% if 'Wednesday' in default_working_days %}checked{% endif %}>
+                                Wed
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 5px;">
+                                <input type="checkbox" name="working_days" value="Thursday" 
+                                    {% if 'Thursday' in default_working_days %}checked{% endif %}>
+                                Thu
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 5px;">
+                                <input type="checkbox" name="working_days" value="Friday" 
+                                    {% if 'Friday' in default_working_days %}checked{% endif %}>
+                                Fri
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 5px;">
+                                <input type="checkbox" name="working_days" value="Saturday" 
+                                    {% if 'Saturday' in default_working_days %}checked{% endif %}>
+                                Sat
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 5px;">
+                                <input type="checkbox" name="working_days" value="Sunday" 
+                                    {% if 'Sunday' in default_working_days %}checked{% endif %}>
+                                Sun
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Other Settings -->
+                    <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+                        <label style="display: flex; align-items: center; gap: 5px;">
+                            Working Hours/Day:
+                            <input type="number" name="working_hours" step="0.5" min="1" max="24" value="{{ working_hours or 8 }}" 
+                                style="width: 80px; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 5px;">
+                            Leave Days:
+                            <input type="number" name="leave_days" step="0.5" min="0" value="{{ leave_days or 0 }}" 
+                                style="width: 80px; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 5px;">
+                            Holiday Days:
+                            <input type="number" name="holiday_days" step="0.5" min="0" value="{{ holiday_days or 0 }}" 
+                                style="width: 80px; padding: 5px; border: 1px solid #ced4da; border-radius: 4px;">
+                        </label>
+                    </div>
+                    <small style="color: #856404; margin-top: 5px; display: block; font-weight: 500;">
+                        <strong>Working Days:</strong> Select which days are considered working days (default: Mon-Fri). Non-working days will be counted as overtime. <br>
+                        <strong>Working Hours:</strong> Hours per day to consider for overtime calculation (default: 8). <br>
+                        <strong>Leave/Holiday Days:</strong> Enter days (e.g., 1 for full day, 0.5 for half day). These will be counted as overtime hours.
+                    </small>
+
+                    <!-- Holiday Calendar Section -->
+                    <div style="margin-top: 20px;">
+                        <h5 style="color: #495057;">Holiday Calendar:</h5>
+                        <div style="display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
+                            <!-- Calendar UI -->
+                            <div style="background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); min-width: 300px;">
+                                <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+                                    <button type="button" onclick="changeMonth(-1)" style="padding:4px 8px;background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;cursor:pointer;color:#000 !important;">←</button>
+                                    <input type="month" id="holidayMonth" value="" style="min-width:150px;padding:4px;border:1px solid #dee2e6;border-radius:4px;">
+                                    <button type="button" onclick="changeMonth(1)" style="padding:4px 8px;background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;cursor:pointer;color:#000 !important;">→</button>
+                                    <button type="button" onclick="resetHolidays()" style="padding:4px 12px;margin-left:12px;background:#fff;border:1px solid #dc3545;color:#dc3545 !important;border-radius:4px;cursor:pointer;font-weight:bold;">Reset</button>
+                                </div>
+                                <table id="holidayCalendar" style="width:100%; margin-top: 10px; border-collapse: collapse;">
+                                    <!-- Calendar will be rendered here -->
+                                </table>
+                            </div>
+
+                            <!-- Excel Import -->
+                            <div>
+                                <label for="holidayExcel" style="font-weight: 500;">Import Holidays (Excel):</label>
+                                <input type="file" id="holidayExcel" accept=".xlsx,.xls" style="margin-top: 5px;">
+                                <button type="button" onclick="uploadHolidayExcel()">Import</button>
+                                <small style="display:block;color:#666;margin-top:4px;">Excel file should have dates in YYYY-MM-DD format</small>
+                            </div>
+                        </div>
+                        <small style="color: #856404; margin-top: 5px; display: block;">
+                            Mark holidays by clicking dates in the calendar or import an Excel file with one column of dates (YYYY-MM-DD).
+                        </small>
+                    </div>
+                </div>
+
+                <div class="download-buttons">
+                    <h3>Download Reports for: <span style="color: #dc3545;">{{ selected_author }}</span> ({{ selected_category or 'Activity' }}) - {{ selected_summary_type or 'Issue Summary' }}</h3>
+                    {% if selected_author == 'All' %}
+                    <a href="{{ url_for('download_bulk_reports', report_type='detailed', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}" class="button-link">Download All Authors Timesheets (Bulk)</a>
+                    {% else %}
+                    <a href="{{ url_for('download_report', report_type='detailed', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}" class="button-link">Download Detailed Timesheet</a>
+                    {% endif %}
+                    <a href="{{ url_for('download_report', report_type='summary', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}" class="button-link">Download Summary Report</a>
+                    <a href="{{ url_for('download_report', report_type='sprint_closure', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}" class="button-link">Download Sprint Closure Report</a>
+                    <button type="button" class="button-reportButton" id="reportButton" onclick="downloadSectionPDF()">Download Report</button>
+
+                </div>
+                <button type="submit">Apply Filters</button>
+            </form>
+        </div>
+
+
+    <div id="reportSection" class="report-section">
+
+        <!-- Display Project Name and Logo below the form -->
+        <div class="project-display-container">
+            <div class="project-display-container-sub">
+                <div class="name-date-container">
+                    <div id="project_display">{{ project_name }}</div>
+                    <div class="date-range-container" >
+                        <p>{{ start_date }}</p>
+                        <p>To</p>
+                        <p>{{ end_date }}</p>
+                    </div>
+                </div>
+                {% if logo_filename %}
+                <img src="{{ url_for('static', filename='uploads/' ~ logo_filename) }}" alt="Project Logo">
+                {% endif %}
+            </div>
+             <p class="key-insight-container"> <b>Key Insights:</b> {{key_insights}} </p>
+        </div>
+
+         <div class="dashboard-metrics">
+             <div class="metric-card">
+                <h4>User Stories</h4>
+                <p>{{ unique_story_count }}</p>
+            </div>
+            <div class="metric-card">
+                <h4>Tasks</h4>
+                <p>{{ unique_task_count }}</p>
+            </div>
+        </div>
+
+         <div id="capacityTableSection" style="margin-top:20px; display: none;">
+            <h3>Available Capacity Table</h3>
+            {% if capacity_list %}
+            <table class="styled-table">
                 <thead>
                     <tr>
-                        <th>Category</th>
-                        <th>Total Hours</th>
+                        <th>Team Member Name</th>
+                        {% for col in capacity_list[0].keys() if col != "Team Member Name" %}
+                        <th>{{ col }}</th>
+                        {% endfor %}
                     </tr>
                 </thead>
                 <tbody>
-                    {% for item in category_totals %}
+                    {% for row in capacity_list %}
                     <tr>
-                        <td>{{ item['Category'] }}</td>
-                        <td>{{ "%.2f"|format(item['Hours spent']) }}</td>
+                        <td>{{ row["Team Member Name"] }}</td>
+                        {% for col, val in row.items() if col != "Team Member Name" %}
+                        <td>{{ val }}</td>
+                        {% endfor %}
                     </tr>
-                    {% else %}
-                    <tr><td colspan="2">No data for this selection.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
-        </div>
+            {% else %}
+            <p>No capacity data available.</p>
+            {% endif %}
 
-        <div class="table-container">
-            <h3>Summary Efforts Table</h3>
-            <table>
+            <h3 style="margin-top:20px;">Category Wise Efforts</h3>
+            {% if category_hours_list %}
+            <table class="styled-table">
                 <thead>
                     <tr>
-                        {% if summary_data %}
-                            {% for col in summary_data[0].keys() %}
-                                <th>{{ col }}</th>
-                            {% endfor %}
-                        {% else %}
-                            <th>Labels</th>
-                            <th>Issue Summary</th>
-                            <th>Author</th>
-                            <th>Status</th>
-                            <th>Total Efforts (hrs)</th>
-                        {% endif %}
+                        <th>Team Member Name</th>
+                        {% for col in category_hours_list[0].keys() if col != "Team Member Name" %}
+                        <th>{{ col }}</th>
+                        {% endfor %}
                     </tr>
                 </thead>
                 <tbody>
-                   <!-- **FIX:** Conditionally add 'status-done' class to the row -->
+                    {% for row in category_hours_list %}
+                    <tr>
+                        <td>{{ row["Team Member Name"] }}</td>
+                        {% for col, val in row.items() if col != "Team Member Name" %}
+                        <td>{{ val }}</td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p>No category capacity data available.</p>
+            {% endif %}
+        </div>
+
+   
+         <div id="results-container" class="results-container" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start;">
+        
+             <!-- Category Summary Table -->
+             <div class="table-container">
+                <h3>Total Hours per Category</h3>
+                <table class="styled-table">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th>Total Hours</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if category_totals %}
+                            {% for item in category_totals %}
+                            <tr {% if item['Category'] == 'No Label/Empty' %}class="no-label-row"{% endif %}>
+                                <td>{{ item['Category'] }}</td>
+                                <td>{{ "%.2f"|format(item['Hours spent']) }}</td>
+                            </tr>
+                            {% endfor %}
+                            <tr style="background-color: #e9ecef; font-weight: bold; border-top: 2px solid #007bff;">
+                                <td><strong>Total</strong></td>
+                                <td><strong>{{ "%.2f"|format(category_total_sum) }}</strong></td>
+                            </tr>
+                        {% else %}
+                            <tr><td colspan="2">No data for this selection.</td></tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Category Pie Chart -->
+            <div class="donut-chart-container">
+                <h3>Category vs Total Hours</h3>
+                <canvas id="categoryPieChart"></canvas>
+            </div>
+         </div>
+        
+           <div id="overtimeSection" class="overtime-container" >
+
+                    <!-- Burnout Alert Section - Full Width -->
+                    {% if burnout_data and burnout_data|length > 0 %}
+                    <div id="burnoutAlert" class="burnout-container" style="display: none;">
+                        <h3>
+                            <span style="font-size: 1.2em;">⚠️</span> Team Burnout Alert
+                        </h3>                    
+                        
+                        <!-- Burnout Detection Methodology -->
+                    <div class="burnout-methodology">
+                            <h5>
+                                <span>📊</span> EMA Workload Strain Score Detection
+                            </h5>
+                            <p><strong>Detection Method:</strong> Exponential Moving Average (EMA) tracks sustained overtime patterns over time</p>
+                            <p><strong>Risk Levels:</strong> Critical (≥12 strain score), High Risk (≥8 strain score), Moderate (≥5 strain score)</p>
+                            <p><strong>Strain Score:</strong> Combines current overtime with historical patterns using smoothing factor 0.4</p>
+                            <p><strong>Overtime includes:</strong> Weekend work, daily hours >8h, holiday work</p>
+                        </div>
+
+
+                        <h4>
+                            🚨 Attention Required - Team Members at Risk
+                        </h4>
+
+                        <table class="burnout-table">
+                            <thead>
+                                <tr>
+                                    <th>Employee</th>
+                                    <th>Strain Score</th>
+                                    <th>Weekend Hours</th>
+                                    <th>Daily OT Hours</th>
+                                    <th>Holiday Hours</th>
+                                    <th>Current OT Hours</th>
+                                    <th>Total Work Hours</th>
+                                    <th>Risk Level</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for employee in burnout_data %}
+                                <tr class="{% if employee.workload_strain_score >= 12 %}risk-critical{% elif employee.workload_strain_score >= 8 %}risk-high{% else %}risk-moderate{% endif %}">
+                                    <td>{{ employee.author }}</td>
+                                    <td><strong>{{ "%.1f"|format(employee.workload_strain_score) }}</strong></td>
+                                    <td>{{ "%.1f"|format(employee.weekend_hours) }}</td>
+                                    <td>{{ "%.1f"|format(employee.daily_overtime) }}</td>
+                                    <td>{{ "%.1f"|format(employee.holiday_overtime) }}</td>
+                                    <td><strong>{{ "%.1f"|format(employee.current_overtime) }}</strong></td>
+                                    <td>{{ "%.1f"|format(employee.total_hours) }}</td>
+                                    <td>
+                                        {% if employee.workload_strain_score >= 12 %}<strong>🔴 Critical</strong>
+                                        {% elif employee.workload_strain_score >= 8 %}<strong>🟡 High Risk</strong>
+                                        {% else %}<strong>🟠 Moderate</strong>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        
+                        <!-- Strain Score Visualization -->
+                        <div style="margin-top: 30px;">
+                            <h4>📈 Workload Strain Score Trends</h4>
+                            <p style="font-size: 0.9em; color: #6c757d; margin-bottom: 15px;">
+                                This chart shows how the EMA smoothing algorithm tracks workload strain over time, combining current overtime with historical patterns.
+                            </p>
+                            <div style="position: relative; height: 400px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px;">
+                                <canvas id="strainScoreChart"></canvas>
+                            </div>
+                            <div style="margin-top: 10px; font-size: 0.85em; color: #6c757d; text-align: center;">
+                                <span style="display: inline-block; width: 15px; height: 15px; background: #28a745; margin-right: 5px; border-radius: 2px;"></span>Safe (< 5)
+                                <span style="display: inline-block; width: 15px; height: 15px; background: #ffc107; margin: 0 5px 0 15px; border-radius: 2px;"></span>Moderate (5-8)
+                                <span style="display: inline-block; width: 15px; height: 15px; background: #fd7e14; margin: 0 5px 0 15px; border-radius: 2px;"></span>High Risk (8-12)
+                                <span style="display: inline-block; width: 15px; height: 15px; background: #dc3545; margin: 0 5px 0 15px; border-radius: 2px;"></span>Critical (≥12)
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                 
+                    <!-- Weekly Overtime Chart -->
+                    {% if weekly_overtime_data and weekly_overtime_data.weeks %}
+                    <div id="overtimeChart" class="chart-container" style="display: none;">
+                        <h3>Weekly Overtime Hours</h3>
+                        <div style="position: relative; height: 250px;">
+                            <canvas id="weeklyOvertimeChart"></canvas>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- Overtime Breakdown -->
+                    <div id="overtimeBreakdown" class="table-container" style="display: none;">
+                        <h3>Overtime Hours</h3>
+                        <table class="styled-table">
+                            <thead>
+                                <tr>
+                                    <th>Overtime Type</th>
+                                    <th>Hours</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% if overtime_data %}
+                                <tr>
+                                    <td>Non-Working Day Hours</td>
+                                    <td>{{ "%.2f"|format(overtime_data.get('weekend_hours', 0)) }}</td>
+                                    <td>All hours worked on non-working days</td>
+                                </tr>
+                                <tr>
+                                    <td>Daily Overtime</td>
+                                    <td>{{ "%.2f"|format(overtime_data.get('daily_overtime', 0)) }}</td>
+                                    <td>Hours beyond {{ working_hours or 8 }} per day on weekdays</td>
+                                </tr>
+                                <tr>
+                                    <td>Leave Days</td>
+                                    <td>{{ "%.2f"|format(overtime_data.get('leave_overtime', 0)) }}</td>
+                                    <td>{{ leave_days or 0 }} days × {{ working_hours or 8 }} hours</td>
+                                </tr>
+                                <tr>
+                                    <td>Holiday Days</td>
+                                    <td>{{ "%.2f"|format(overtime_data.get('holiday_overtime', 0)) }}</td>
+                                    <td>{{ holiday_days or 0 }} days × {{ working_hours or 8 }} hours</td>
+                                </tr>
+                                <tr style="background-color: #fff3cd; font-weight: bold; border-top: 2px solid #ffc107;">
+                                    <td><strong>Total Overtime</strong></td>
+                                    <td><strong>{{ "%.2f"|format(overtime_data.get('total_overtime', 0)) }}</strong></td>
+                                    <td><strong>All overtime hours combined</strong></td>
+                                </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+           </div>
+        <!-- Summary Table -->
+        <div id="summary-container" class="summary-container">
+        <h3>Summary Efforts Table</h3>
+        <div id="summary-info"></div>
+        <table id="summary-table"  class="styled-table">
+            <thead>
+                <tr>
+                    {% if summary_data and summary_data|length > 0 %}
+                        {% for col in summary_data[0].keys() %}
+                            <th>{{ col }}</th>
+                        {% endfor %}
+                    {% else %}
+                        <th>Labels</th>
+                        <th>Issue Summary</th>
+                        <th>Author</th>
+                        <th>Status</th>
+                        <th>Total Efforts (hrs)</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% if summary_data %}
                     {% for row in summary_data %}
                     <tr class="{% if row['Issue Status'] and row['Issue Status']|string|lower|trim == 'done' %}status-done{% endif %}">
                         {% for val in row.values() %}
                             <td>{{ val }}</td>
                         {% endfor %}
                     </tr>
+                    {% endfor %}
                 {% else %}
-                <tr><td colspan="5">No data for this selection.</td></tr>
-                {% endfor %}
-                </tbody>
-            </table>
+                    <tr><td colspan="5">No data available.</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+
+    <!-- Pagination controls -->
+        <div id="pagination-controls"></div>
         </div>
     </div>
+       
     {% endif %}
 </div>
-
 </body>
 </html>
