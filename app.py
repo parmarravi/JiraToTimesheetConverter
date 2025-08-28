@@ -1,8 +1,11 @@
 import socket
 import pandas as pd
 from io import BytesIO
-from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify
+from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify,session
+from datetime import datetime
+
 app = Flask(__name__, static_folder='static')
+app.secret_key = 'supersecretkey'  # Required for session to work
 
 # --- Global variables to hold the application's state ---
 global_df = None
@@ -656,6 +659,12 @@ def process_reverse_timesheet(df):
     
     return reverse_df
 
+# Convert to datetime and reformat
+def format_date(date_str):
+    if date_str:
+        return datetime.strptime(date_str, "%Y-%m-%d").strftime("%d/%m/%Y")
+    return ""
+
 def process_sprint_closure_report(df, summary_type="Issue Summary"):
     """
     Generates the data for the Sprint Closure Report.
@@ -767,6 +776,92 @@ def process_sprint_closure_report(df, summary_type="Issue Summary"):
             features_df.to_excel(writer, sheet_name='Sprint Closure Report', startrow=next_row, index=False)
     output_io.seek(0)
     return output_io
+
+
+def availableCapacity(df, selectedAuthor=None, workingHours=8, workingDays=None, holidays=None, customColumn=None):
+    """
+    Calculate available capacity and category-wise hours per team member.
+    Mirrors the logic from process_sprint_closure_report.
+    Returns: (capacity_list, category_hours_list)
+    """
+
+    if df.empty:
+        return [], []
+
+    # Ensure Start Date is datetime
+    df['Start Date'] = pd.to_datetime(df['Start Date'])
+    df['Hours Spent'] = df['Time Spent (seconds)'] / 3600
+
+    # --- Capacity Calculation ---
+    weekdays_df = df[df['Start Date'].dt.weekday < 5].copy()
+
+    working_days = (
+        weekdays_df.groupby('Author')['Start Date']
+        .apply(lambda s: s.dt.date.nunique())
+        .reset_index()
+    )
+    working_days.columns = ['Team Member Name', 'Working Days']
+    working_days['Available Capacity (Hours)'] = working_days['Working Days'] * workingHours
+
+    if 'LeaveDays' in df.columns:
+        leave_info = df.groupby('Author')['LeaveDays'].max().reset_index()
+        leave_info.columns = ['Team Member Name', 'Leave Days']
+        working_days = working_days.merge(leave_info, on='Team Member Name', how='left')
+        working_days['Leave Days'] = working_days['Leave Days'].fillna(0).astype(int)
+        working_days['Adjusted Working Days'] = working_days['Working Days'] - working_days['Leave Days']
+        working_days['Adjusted Capacity (Hours)'] = working_days['Adjusted Working Days'] * workingHours
+
+    capacity_list = working_days.to_dict(orient='records')
+
+    columnNameFilter =customColumn if customColumn in df.columns else 'Labels'
+    print("customColumn:", customColumn)
+    print(columnNameFilter)
+    # --- Category-wise Hours (Burned Capacity) ---
+    burned_capacity = pd.pivot_table(
+        df, values='Hours Spent', index='Author', columns=columnNameFilter,
+        aggfunc='sum', fill_value=0
+    ).round(2)
+
+    if not burned_capacity.empty:
+        burned_capacity['Grand Total'] = burned_capacity.sum(axis=1)
+    burned_capacity.reset_index(inplace=True)
+    burned_capacity.rename(columns={'Author': 'Team Member Name'}, inplace=True)
+
+    category_hours_list = burned_capacity.to_dict(orient='records')
+
+    return capacity_list, category_hours_list
+
+def getStoryAndTaskCount(df):
+    """
+    Returns the count of unique stories and tasks in the global dataframe.
+    """
+   
+   # --- Calculate unique counts ---
+    task_count = 0
+    story_count = 0
+    unique_story_ids = []
+    unique_task_ids = []
+
+    if not df.empty:
+        if 'Issue Key' in df.columns:
+            task_keys = df['Issue Key'].dropna().tolist()
+        for key in task_keys:
+                 if key not in unique_task_ids:
+                  unique_task_ids.append(key)    
+
+        if 'Parent Key' in df.columns:
+                    parent_keys = df['Parent Key'].dropna().tolist()
+        for key in parent_keys:
+            if key not in unique_story_ids:
+                unique_story_ids.append(key)
+
+
+        story_count = len(unique_story_ids)
+        task_count = len(unique_task_ids)
+
+
+    return story_count, task_count
+
 
 # --- Flask Routes ---
 
@@ -932,57 +1027,104 @@ def get_holidays():
     """
     return jsonify({'holidays': list(global_holidays)})
 
-@app.route('/report')
+
+@app.route('/report_toolbar', methods=['Post'])
+def reportToolbar():
+    """
+    Handles project name and logo upload from toolbar.
+    Stores them in session so they persist across /report GET requests.
+    """
+    project_name = request.form.get('project_name')
+    if project_name:
+        session['project_name'] = project_name
+
+    logo_file = request.files.get('project_logo')
+
+    if logo_file and logo_file.filename != '':
+        from werkzeug.utils import secure_filename
+        import os
+
+        filename = secure_filename(logo_file.filename)
+        upload_folder = 'static/uploads'
+        os.makedirs(upload_folder, exist_ok=True)
+        logo_file.save(os.path.join(upload_folder, filename))
+        session['logo_filename'] = filename  # persist across GETs
+
+    # Date range
+    start_date = request.form.get('start_date')
+    end_date = request.form.get('end_date')
+    if start_date:
+        session['start_date'] = start_date
+    if end_date:
+        session['end_date'] = end_date
+
+    key_insights = request.form.get('key_insights')
+    session['key_insights'] = key_insights
+
+
+    return redirect(url_for('results'))  # go back to /report
+                   
+  
+                
+
+@app.route('/report', methods=['GET'])
 def results():
-    """
-    Displays the report page. It filters the global data based on the
-    'author' query parameter and generates the UI tables.
-    """
     if global_df is None:
         return redirect(url_for('index'))
 
+    # Defaults
     selected_author = request.args.get('author', 'All')
-    selected_category = request.args.get('category_type', 'Activity')  # default Activity
-    selected_summary_type = request.args.get('summary_type', 'Issue Summary')  # default Issue Summary
-    custom_column = request.args.get('custom_column', '')
+    selected_category = request.args.get('category_type', 'Activity')
+    selected_summary_type = request.args.get('summary_type', 'Issue Summary')
+    working_hours = float(request.args.get('working_hours', 8))
+    working_days = request.args.getlist('working_days') or ['Monday','Tuesday','Wednesday','Thursday','Friday']
     leave_days = float(request.args.get('leave_days', 0))
     holiday_days = float(request.args.get('holiday_days', 0))
-    working_hours = float(request.args.get('working_hours', 8))
-    working_days = request.args.getlist('working_days') or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     holidays = list(global_holidays)
+    custom_column = request.args.get('custom_column', '')
 
-    # Handle custom column selection - check if it's a custom column name directly
-    if selected_category not in ['Activity', 'Label'] and selected_category != 'Activity':
-        # This means selected_category contains the custom column name
+    # Get project name and logo from session
+    project_name = session.get('project_name')
+    logo_filename = session.get('logo_filename')
+    start_date = session.get('start_date')
+    end_date = session.get('end_date')
+    key_insights = session.get('key_insights')
+
+
+
+
+    # Default project name if not set
+    if not project_name and 'Project Name' in global_df.columns and not global_df['Project Name'].empty:
+        project_name = global_df['Project Name'].iloc[0]
+
+    # Handle custom column selection
+    if selected_category not in ['Activity','Label']:
         custom_column = selected_category
     elif selected_category == 'Custom' and custom_column:
         selected_category = custom_column
+
+    # Filter dataframe
+    display_df = global_df if selected_author=='All' else global_df[global_df['Author']==selected_author].copy()
+
+
     
-    # Debug logging
-    print(f"Debug - selected_category: {selected_category}, custom_column: {custom_column}, summary_type: {selected_summary_type}")
+#     # Calculate burnout detection using EMA Workload Strain Score
+    # burnout_data = detect_burnout(display_df.copy(), working_hours, working_days, holidays, burnout_threshold=10)
 
-    # Filter the main DataFrame based on selection
-    if selected_author == 'All':
-        display_df = global_df
-    else:
-        display_df = global_df[global_df['Author'] == selected_author].copy()
-
-    # Generate data for the UI tables with category type and summary type
+    # Calculate all tables / charts
+    capacity_list, category_hours_list = availableCapacity(display_df.copy(), selected_author, working_hours, working_days, holidays, selected_category)
     _, category_totals_df = process_timesheet(display_df.copy(), global_base_url, selected_category, working_days, holidays)
     summary_df_for_ui = process_summary(display_df.copy(), selected_category, selected_summary_type)
-    
-    # Calculate overtime hours
     overtime_data = calculate_overtime_hours(display_df.copy(), leave_days, 0, working_hours, working_days, holidays)
-    
-    # Calculate weekly overtime data for chart
     weekly_overtime_data = calculate_weekly_overtime(display_df.copy(), working_hours, working_days, holidays)
-    
-    # Calculate burnout detection using EMA Workload Strain Score
-    burnout_data = detect_burnout(display_df.copy(), working_hours, working_days, holidays, burnout_threshold=10)
-    
-    # Calculate category total sum
     category_total_sum = category_totals_df['Hours spent'].sum() if not category_totals_df.empty else 0
+    unique_story_count, unique_task_count = getStoryAndTaskCount(display_df.copy())
 
+
+    start_date_str = format_date(start_date)
+    end_date_str = format_date(end_date)
+    print("start_date:", start_date)
+    print("end_date:", end_date)
     return render_template(
         'index.html',
         processed=True,
@@ -999,9 +1141,106 @@ def results():
         summary_data=summary_df_for_ui.to_dict(orient='records'),
         overtime_data=overtime_data,
         weekly_overtime_data=weekly_overtime_data,
-        burnout_data=burnout_data,
-        holidays=holidays
+        holidays=holidays,
+        unique_task_count=unique_task_count,
+        unique_story_count=unique_story_count,
+        capacity_list=capacity_list,
+        category_hours_list=category_hours_list,
+        project_name=project_name,
+        logo_filename=logo_filename,
+        start_date= start_date_str,
+        end_date= end_date_str,
+        key_insights = key_insights,
+        # burnout_data=burnout_data,
+
     )
+
+
+# @app.route('/report', methods=['GET', 'POST'])
+# def results():
+#     """
+#     Displays the report page. It filters the global data based on the
+#     'author' query parameter and generates the UI tables.
+#     """
+   
+#     if global_df is None:
+#         return redirect(url_for('index'))
+
+#     selected_author = request.args.get('author', 'All')
+#     selected_category = request.args.get('category_type', 'Activity')  # default Activity
+#     selected_summary_type = request.args.get('summary_type', 'Issue Summary')  # default Issue Summary
+#     custom_column = request.args.get('custom_column', '')
+#     leave_days = float(request.args.get('leave_days', 0))
+#     holiday_days = float(request.args.get('holiday_days', 0))
+#     working_hours = float(request.args.get('working_hours', 8))
+#     working_days = request.args.getlist('working_days') or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+#     holidays = list(global_holidays)
+
+#     # Handle custom column selection - check if it's a custom column name directly
+#     if selected_category not in ['Activity', 'Label'] and selected_category != 'Activity':
+#         # This means selected_category contains the custom column name
+#         custom_column = selected_category
+#     elif selected_category == 'Custom' and custom_column:
+#         selected_category = custom_column
+    
+#     # Debug logging
+#     print(f"Debug - selected_category: {selected_category}, custom_column: {custom_column}, summary_type: {selected_summary_type}")
+
+#     # Filter the main DataFrame based on selection
+#     if selected_author == 'All':
+#         display_df = global_df
+#     else:
+#         display_df = global_df[global_df['Author'] == selected_author].copy()
+
+
+
+#     # Calculate working days, holidays, and leave days
+#     capacity_list, category_hours_list =availableCapacity(display_df.copy(), selected_author, working_hours, working_days, holidays, selected_category )
+#     # Generate data for the UI tables with category type and summary type
+#     _, category_totals_df = process_timesheet(display_df.copy(), global_base_url, selected_category, working_days, holidays)
+#     summary_df_for_ui = process_summary(display_df.copy(), selected_category, selected_summary_type)
+    
+#     # Calculate overtime hours
+#     overtime_data = calculate_overtime_hours(display_df.copy(), leave_days, 0, working_hours, working_days, holidays)
+    
+#     # Calculate weekly overtime data for chart
+#     weekly_overtime_data = calculate_weekly_overtime(display_df.copy(), working_hours, working_days, holidays)
+    
+#     # Calculate burnout detection using EMA Workload Strain Score
+#     burnout_data = detect_burnout(display_df.copy(), working_hours, working_days, holidays, burnout_threshold=10)
+    
+#     # Calculate category total sum
+#     category_total_sum = category_totals_df['Hours spent'].sum() if not category_totals_df.empty else 0
+
+#     unique_story_count, unique_task_count = getStoryAndTaskCount(display_df.copy())
+
+#     project_name = display_df['Project Name'].iloc[0] if 'Project Name' in display_df.columns and not display_df['Project Name'].empty else 'Unknown Project'
+
+#     return render_template(
+#         'index.html',
+#         processed=True,
+#         authors=global_authors,
+#         selected_author=selected_author,
+#         selected_category=selected_category,
+#         selected_summary_type=selected_summary_type,
+#         leave_days=leave_days,
+#         holiday_days=holiday_days,
+#         working_hours=working_hours,
+#         working_days=working_days,
+#         category_totals=category_totals_df.to_dict(orient='records'),
+#         category_total_sum=category_total_sum,
+#         summary_data=summary_df_for_ui.to_dict(orient='records'),
+#         overtime_data=overtime_data,
+#         weekly_overtime_data=weekly_overtime_data,
+#         burnout_data=burnout_data,
+#         holidays=holidays,
+#         unique_task_count=unique_task_count,
+#         unique_story_count=unique_story_count,
+#         capacity_list=capacity_list,
+#         category_hours_list = category_hours_list,
+#         project_name = project_name, 
+
+#     )
 
 @app.route('/download_bulk/<report_type>')
 def download_bulk_reports(report_type):
