@@ -403,6 +403,8 @@ tbody tr:nth-child(odd) {
   font-size: 14px;
   width: 100%;
   overflow-x: auto;
+  table-layout: auto;
+  word-wrap: break-word;
 }
 .styled-table th,
 .styled-table td {
@@ -574,4 +576,25 @@ tbody tr:nth-child(odd) {
   resize: vertical; /* allow vertical resize */
   box-sizing: border-box;
   background-color: #f8f9fa;
+}
+
+@media print {
+  .hidden-section {
+    display: none !important;
+    visibility: hidden;
+    height: 0;
+    margin: 0;
+    padding: 0;
+  }
+  section:empty {
+    display: none !important;
+  }
+  .no-break {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .styled-table {
+    width: 100% !important;
+    font-size: 10px; /* reduce size to fit */
+  }
 }

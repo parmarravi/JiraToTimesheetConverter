@@ -565,6 +565,29 @@
                             </tbody>
                         </table>
                     </div>
+
+                    {% if selected_author == "All" and overtime_list and overtime_list|length > 0 %}
+                    <div id="overTimeAuthor" class="table-container" style="display: none;">
+                        <h3>Overtime by Author</h3>
+                        <table class="styled-table">
+                            <thead>
+                                <tr>
+                                    <th>Author</th>
+                                    <th>Total Overtime (hrs)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in overtime_list %}
+                                <tr>
+                                    <td>{{ row["Author"] }}</td>
+                                    <td>{{ row["Total Overtime (hrs)"] }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% endif %}
+
            </div>
         <!-- Summary Table -->
         <div id="summary-container" class="summary-container">
@@ -601,7 +624,7 @@
             </tbody>
         </table>
 
-    <!-- Pagination controls -->
+           <!-- Pagination controls -->
         <div id="pagination-controls"></div>
         </div>
     </div>

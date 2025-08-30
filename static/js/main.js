@@ -76,17 +76,21 @@ function toggleOvertimeUI() {
   const overtimeChart = document.getElementById("overtimeChart");
   const overtimeBreakdown = document.getElementById("overtimeBreakdown");
   const burnoutAlert = document.getElementById("burnoutAlert");
+  const overTimeAuthor = document.getElementById("overTimeAuthor");
+
   localStorage.setItem("overtimeUIEnabled", checkbox.checked);
   if (checkbox.checked) {
     settingsToggle.style.display = "block";
     if (overtimeChart) overtimeChart.style.display = "block";
     if (overtimeBreakdown) overtimeBreakdown.style.display = "block";
     if (burnoutAlert) burnoutAlert.style.display = "block";
+    if (overTimeAuthor) overTimeAuthor.style.display = "block";
   } else {
     settingsToggle.style.display = "none";
     if (overtimeChart) overtimeChart.style.display = "none";
     if (overtimeBreakdown) overtimeBreakdown.style.display = "none";
     if (burnoutAlert) burnoutAlert.style.display = "none";
+    if (overTimeAuthor) overTimeAuthor.style.display = "none";
     const panel = document.getElementById("overtimeSettingsPanel");
     if (panel) panel.style.display = "none";
     const toggleText = document.getElementById("overtimeToggleText");
@@ -763,6 +767,17 @@ function replaceCanvasWithImages(container) {
   });
 }
 
+// 🟢 Utility to check if an element is effectively empty
+function isVisiblyEmpty(el) {
+  // no text, no children, and no meaningful size
+  return (
+    !el.textContent.trim() &&
+    el.children.length === 0 &&
+    el.offsetHeight === 0 &&
+    el.offsetWidth === 0
+  );
+}
+
 async function convertCanvasesToImages(container) {
   const canvases = container.querySelectorAll("canvas");
 
@@ -797,13 +812,6 @@ async function downloadSectionPDF() {
     "availableCapacityUIEnabled"
   );
 
-  console.log(
-    "Saved States - Overtime:",
-    savedStateOverTime,
-    "Capacity UI:",
-    savedStateCapacityUi
-  );
-
   await convertCanvasesToImages(element);
 
   // Clone the element
@@ -815,6 +823,18 @@ async function downloadSectionPDF() {
 
   // Replace canvases in clone with images
   await convertCanvasesToImages(clone);
+
+  // Force wide tables to fit within A4 portrait width
+  const tables = clone.querySelectorAll("table");
+  tables.forEach((table) => {
+    table.style.fontSize = "11px"; // adjust as needed (e.g. 9px, 11px)
+    table.style.padding = "2px"; // shrink cell padding
+    table.style.maxWidth = "100%";
+    table.style.width = "100%";
+    table.style.wordBreak = "break-word";
+    table.style.tableLayout = "auto"; // let columns shrink
+    table.style.overflowX = "auto";
+  });
 
   // Results section page break (only when capacity is true)
   if (savedStateCapacityUi === "true") {
@@ -844,6 +864,34 @@ async function downloadSectionPDF() {
   const paginationInClone = clone.querySelector("#pagination-controls");
   if (paginationInClone) paginationInClone.style.display = "none";
 
+  if (savedStateOverTime == "false") {
+    console.log("Hiding overtime section in PDF");
+    const overtimeSection = clone.querySelector("#overtimeSection");
+    overtimeSection.style.display = "none";
+  } else {
+    const overTimeAuthorInClone = clone.querySelector("#overTimeAuthor");
+    if (overTimeAuthorInClone) {
+      overTimeAuthorInClone.classList.add("page-break-before");
+    }
+  }
+
+  // 🟢 Remove hidden elements
+  clone.querySelectorAll("*").forEach((el) => {
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") el.remove();
+  });
+
+  // 🟢 Remove empty elements to prevent blank pages
+  clone.querySelectorAll("div, section, tr").forEach((el) => {
+    if (isVisiblyEmpty(el)) el.remove();
+  });
+
+  // 🟢 Extra: remove accidental blank page-break containers
+  clone.querySelectorAll(".page-break-before").forEach((el) => {
+    if (!el.textContent.trim() && el.children.length === 0) {
+      el.remove();
+    }
+  });
   // Hide clone but keep measurable
   // clone.style.position = "absolute";
   // clone.style.top = "0";
@@ -861,6 +909,13 @@ async function downloadSectionPDF() {
   wrapper.style.zIndex = "-1";
   wrapper.style.visibility = "hidden";
 
+  // Force table/container to shrink to page width
+  clone.style.maxWidth = "100%";
+  clone.style.overflowX = "auto";
+
+  // clone.style.transform = "scale(0.9)"; // adjust scale factor if needed
+  // clone.style.transformOrigin = "top left";
+
   wrapper.appendChild(clone);
   document.body.appendChild(wrapper);
 
@@ -868,11 +923,30 @@ async function downloadSectionPDF() {
     margin: 0.3,
     filename: "report.pdf",
     image: { type: "jpeg", quality: 0.98 },
-    html2canvas: { scale: 2, logging: true, useCORS: true, scrollY: 0 },
+    html2canvas: {
+      scale: 3, // higher scale improves clarity
+      logging: true,
+      useCORS: true,
+      scrollX: 0,
+      scrollY: 0,
+      windowWidth: clone.scrollWidth, // ensures wide table fits
+    },
     jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
   };
 
   try {
+    // 🟢 FINAL CLEANUP before rendering
+    const blankPages = clone.querySelectorAll(
+      "div, section,overtimeSection,capacityTableSection"
+    );
+    blankPages.forEach((el) => {
+      if (isVisiblyEmpty(el)) el.remove();
+    });
+
+    const hidden = document.querySelectorAll(".hidden-section");
+
+    hidden.forEach((el) => el.parentNode.removeChild(el));
+
     await html2pdf().set(opt).from(clone).save();
     console.log("PDF generated successfully");
   } catch (err) {

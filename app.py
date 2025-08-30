@@ -1006,6 +1006,52 @@ def upload_holidays():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
+def calculate_overtime_list(df, leave_days=0, working_hours=8, working_days=None, holidays=None):
+    """Return list of authors with non-zero overtime."""
+    if df.empty:
+        return []
+
+    if working_days is None:
+        working_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    if holidays is None:
+        holidays = []
+
+    # Reuse same logic from calculate_overtime_hours
+    overtime = calculate_overtime_hours(df, leave_days, 0, working_hours, working_days, holidays)
+
+    # If calculate_overtime_hours returned aggregate (dict, not list), rebuild per author
+    df['Start Date'] = pd.to_datetime(df['Start Date']).dt.tz_localize(None)
+    df['Hours spent'] = df['Time Spent (seconds)'] / 3600
+    df['Weekday'] = df['Start Date'].dt.weekday
+    df['DateStr'] = df['Start Date'].dt.strftime('%Y-%m-%d')
+
+    day_name_to_num = {
+        'Monday': 0, 'Tuesday': 1, 'Wednesday': 2, 'Thursday': 3,
+        'Friday': 4, 'Saturday': 5, 'Sunday': 6
+    }
+    working_day_nums = [day_name_to_num[day] for day in working_days]
+
+    daily_work = df.groupby(['Author', 'Start Date', 'Weekday', 'DateStr'])['Hours spent'].sum().reset_index()
+    overtime_list = []
+
+    for author in df['Author'].unique():
+        author_data = daily_work[daily_work['Author'] == author]
+        weekend_hours = author_data[~author_data['Weekday'].isin(working_day_nums)]['Hours spent'].sum()
+        holiday_hours = author_data[author_data['DateStr'].isin(holidays)]['Hours spent'].sum()
+        working_day_records = author_data[(author_data['Weekday'].isin(working_day_nums)) & (~author_data['DateStr'].isin(holidays))]
+        daily_overtime = working_day_records[working_day_records['Hours spent'] > working_hours]['Hours spent'].apply(lambda x: x - working_hours).sum()
+        leave_overtime = leave_days * working_hours
+        total_overtime = weekend_hours + holiday_hours + daily_overtime + leave_overtime
+
+        if total_overtime > 0:  # Only include authors with overtime
+            overtime_list.append({
+                "Author": author,
+                "Total Overtime (hrs)": round(total_overtime, 2)
+            })
+
+    return overtime_list
+          
+                
 @app.route('/set_holidays', methods=['POST'])
 def set_holidays():
     """
@@ -1117,10 +1163,14 @@ def results():
     summary_df_for_ui = process_summary(display_df.copy(), selected_category, selected_summary_type)
     overtime_data = calculate_overtime_hours(display_df.copy(), leave_days, 0, working_hours, working_days, holidays)
     weekly_overtime_data = calculate_weekly_overtime(display_df.copy(), working_hours, working_days, holidays)
+   
+       # NEW: build per-author overtime table if "All" selected
+    overtime_list = []
+    if selected_author == "All":
+        overtime_list = calculate_overtime_list(display_df.copy(), leave_days, working_hours, working_days, holidays)
+
     category_total_sum = category_totals_df['Hours spent'].sum() if not category_totals_df.empty else 0
     unique_story_count, unique_task_count = getStoryAndTaskCount(display_df.copy())
-
-
     start_date_str = format_date(start_date)
     end_date_str = format_date(end_date)
     print("start_date:", start_date)
@@ -1151,6 +1201,7 @@ def results():
         start_date= start_date_str,
         end_date= end_date_str,
         key_insights = key_insights,
+        overtime_list=overtime_list,  
         # burnout_data=burnout_data,
 
     )
@@ -1377,4 +1428,4 @@ def download_report(report_type):
     )
 
 if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5005)
