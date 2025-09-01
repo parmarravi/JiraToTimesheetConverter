@@ -843,17 +843,25 @@ def getStoryAndTaskCount(df):
     unique_task_ids = []
 
     if not df.empty:
+                    # --- Handle task keys ---
+        task_keys = []
         if 'Issue Key' in df.columns:
             task_keys = df['Issue Key'].dropna().tolist()
         for key in task_keys:
-                 if key not in unique_task_ids:
-                  unique_task_ids.append(key)    
+            if key not in unique_task_ids:
+                unique_task_ids.append(key)
 
+        # --- Handle parent keys ---
+        parent_keys = []
         if 'Parent Key' in df.columns:
-                    parent_keys = df['Parent Key'].dropna().tolist()
+            parent_keys = df['Parent Key'].dropna().tolist()
         for key in parent_keys:
             if key not in unique_story_ids:
                 unique_story_ids.append(key)
+
+        story_count = len(unique_story_ids)
+        task_count = len(unique_task_ids)
+
 
 
         story_count = len(unique_story_ids)
