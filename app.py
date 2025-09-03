@@ -871,6 +871,27 @@ def getStoryAndTaskCount(df):
     return story_count, task_count
 
 
+def getAuthorSubtaskCount(df):
+    """
+    Returns a list of (Author, Subtask Count) for each author.
+    Only counts issues where Issue Type = 'Sub-task'.
+    """
+    author_task_list = []
+
+    if not df.empty and {'Author', 'Issue Key', 'Issue Type'}.issubset(df.columns):
+        # Filter only subtasks
+        subtask_df = df[df['Issue Type'] == 'Subtask']
+
+        # Group by author and count unique subtasks Worklog Id
+        for author, group in subtask_df.groupby('Author'):
+            unique_tasks = group['Issue Key'].dropna().unique()
+            author_task_list.append({
+                "Author": author,
+                "count": len(unique_tasks)
+            })
+
+    print("author_task_list",author_task_list) 
+    return author_task_list
 # --- Flask Routes ---
 
 @app.route('/')
@@ -1179,6 +1200,8 @@ def results():
 
     category_total_sum = category_totals_df['Hours spent'].sum() if not category_totals_df.empty else 0
     unique_story_count, unique_task_count = getStoryAndTaskCount(display_df.copy())
+    author_task_list = getAuthorSubtaskCount(display_df.copy())
+    
     start_date_str = format_date(start_date)
     end_date_str = format_date(end_date)
     print("start_date:", start_date)
@@ -1210,6 +1233,7 @@ def results():
         end_date= end_date_str,
         key_insights = key_insights,
         overtime_list=overtime_list,  
+        author_task_data=author_task_list,
         # burnout_data=burnout_data,
 
     )

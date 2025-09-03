@@ -69,6 +69,21 @@ function setupEventListeners() {
   // }
 }
 
+function toggleAuthorSubtaskUI() {
+  console.log("Toggling Author Subtask UI");
+  const section = document.getElementById("author-task-container");
+  const toggle = document.getElementById("showAuthorSubtaskUI");
+  section.style.display = toggle.checked ? "block" : "none";
+  localStorage.setItem("authorSubtaskUIEnabled", toggle.checked);
+}
+
+function toggleCapacityUI() {
+  console.log("Toggling Capacity UI");
+  const section = document.getElementById("capacityTableSection");
+  const toggle = document.getElementById("showCapacityUI");
+  section.style.display = toggle.checked ? "block" : "none";
+  localStorage.setItem("availableCapacityUIEnabled", toggle.checked);
+}
 // Overtime UI toggle
 function toggleOvertimeUI() {
   const checkbox = document.getElementById("showOvertimeUI");
@@ -106,6 +121,10 @@ function restoreOvertimeState() {
     "availableCapacityUIEnabled"
   );
 
+  const savedStateAuthorSubTaskUiEnabled = localStorage.getItem(
+    "authorSubtaskUIEnabled"
+  );
+
   if (savedState === "true") {
     const checkbox = document.getElementById("showOvertimeUI");
     if (checkbox) {
@@ -119,6 +138,16 @@ function restoreOvertimeState() {
     if (checkboxAvailableCapacity) {
       checkboxAvailableCapacity.checked = true;
       toggleCapacityUI();
+    }
+  }
+
+  if (savedStateAuthorSubTaskUiEnabled === "true") {
+    const checkboxAuthorSubTaskUiEnabled = document.getElementById(
+      "showAuthorSubtaskUI"
+    );
+    if (checkboxAuthorSubTaskUiEnabled) {
+      checkboxAuthorSubTaskUiEnabled.checked = true;
+      toggleAuthorSubtaskUI();
     }
   }
 }
@@ -954,14 +983,6 @@ async function downloadSectionPDF() {
   } finally {
     document.body.removeChild(wrapper);
   }
-}
-
-function toggleCapacityUI() {
-  console.log("Toggling Capacity UI");
-  const section = document.getElementById("capacityTableSection");
-  const toggle = document.getElementById("showCapacityUI");
-  section.style.display = toggle.checked ? "block" : "none";
-  localStorage.setItem("availableCapacityUIEnabled", toggle.checked);
 }
 
 function initProjectNameDisplay(

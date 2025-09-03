@@ -157,6 +157,16 @@
                     </label>
                 </div>
 
+                <div style="margin-top:15px;">
+                    <label style="display:flex; align-items:center; gap:15px; font-weight:bold; color:#495057;">
+                        <span style="font-size:1.1em;">📝 Show Assigned Task</span>
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="showAuthorSubtaskUI" onchange="toggleAuthorSubtaskUI()">
+                            <span class="slider"></span>
+                        </div>
+                    </label>
+                </div>
+
                 <!-- Capacity Table Toggle -->
                 <div style="margin-top:15px;">
                     <label style="display:flex; align-items:center; gap:15px; font-weight:bold; color:#495057;">
@@ -589,9 +599,38 @@
                     {% endif %}
 
            </div>
+          
+        {% if selected_author == "All" and author_task_data %} 
+        <!-- Author Subtask Count Table -->
+        <div id="author-task-container" class="author-task-container" style="display: none;">
+            <h3>Task Assigned</h3>
+            <div id="author-task-info"></div>
+            <table id="author-task-table" class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Author</th>
+                        <th>Task Count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if author_task_data %}
+                        {% for row in author_task_data %}
+                        <tr>
+                            <td>{{ row['Author'] }}</td>
+                            <td>{{ row['count'] }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr><td colspan="2">No data available.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+   
         <!-- Summary Table -->
         <div id="summary-container" class="summary-container">
-        <h3>Summary Efforts Table</h3>
+        <h3>Summary Efforts</h3>
         <div id="summary-info"></div>
         <table id="summary-table"  class="styled-table">
             <thead>
