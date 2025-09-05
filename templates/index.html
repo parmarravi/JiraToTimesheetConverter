@@ -8,14 +8,17 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-     <!-- Server-injected config -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- Server-injected config -->
     <script>
         window.serverData = {
             holidays: {{ holidays | default([]) | tojson | safe }},
             weeklyOvertimeData: {{ weekly_overtime_data | default(None) | tojson | safe }},
             categoryData: {{ category_totals | default([]) | tojson | safe }},
-            burnoutData: {{ burnout_data | default([]) | tojson | safe }}
+            burnoutData: {{ burnout_data | default([]) | tojson | safe }},
+            showAuthorSubtask: {{ show_author_subtask | default(false) | tojson | safe }},
+            showCapacity: {{ show_capacity | default(false) | tojson | safe }},
+            showOvertime: {{ show_overtime | default(false) | tojson | safe }}
         };
     </script>
 
@@ -23,13 +26,18 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 
     <!-- App scripts -->
-    <script defer src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <!-- <script defer src="{{ url_for('static', filename='js/main.js') }}"></script> -->
     
+     <!-- App scripts with modules -->
+    <script type="module" src="{{ url_for('static', filename='js/db.js') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
+
 </head>
 <body>
 <div class="main-container">
     <h2>Upload Jira Timesheet</h2>
     
+
     <!-- Upload Form -->
     {% if not processed %}
     <div class="upload-section">
@@ -103,39 +111,45 @@
         <hr style="margin-top: 25px;">
         <div>
            
-            <form action="{{ url_for('results') }}" method="get"  class="filter-form" onsubmit="preserveOvertimeState()">
+            <form action="{{ url_for('results') }}" method="get" class="filter-form" onsubmit="preserveUIState(event)">
                 
                 <h3>Filter Report</h3>
 
 
                 <!-- Author filter -->
-                <div class="radio-group">
-                    <h4>Select Author</h4>
-                    <label>
-                        <input type="radio" name="author" value="All" {% if selected_author == 'All' %}checked{% endif %}>
-                        All
-                    </label>
-                    {% for author in authors %}
-                    <label>
-                        <input type="radio" name="author" value="{{ author }}" {% if selected_author == author %}checked{% endif %}>
-                        {{ author }}
-                    </label>
-                    {% endfor %}
+                <div class="checkbox-group">
+                    <h4>Select Authors</h4>
+                    <div class="select-all-option">
+                        <label>
+                            <input type="checkbox" id="selectAllAuthors" name="author" value="All" 
+                                   {% if selected_authors and 'All' in selected_authors %}checked{% endif %}>
+                            Select All
+                        </label>
+                    </div>
+                    <div class="author-options">
+                        {% for author in authors %}
+                        <label>
+                            <input type="checkbox" name="author" value="{{ author }}" class="author-checkbox"
+                                   {% if selected_authors and author in selected_authors %}checked{% endif %}>
+                            {{ author }}
+                        </label>
+                        {% endfor %}
+                    </div>
                 </div>
 
                 <!-- Category Type filter -->
                 <div class="radio-group" style="margin-top:15px;">
                     <h4>Select Category Type</h4>
                     <label>
-                        <input type="radio" name="category_type" value="Activity" {% if selected_category == 'Activity' or not selected_category %}checked{% endif %} onchange="toggleCustomInput()">
+                        <input type="radio" name="category_type" value="Activity" {% if selected_category == 'Activity' or not selected_category %}checked{% endif %}>
                         Activity
                     </label>
                     <label>
-                        <input type="radio" name="category_type" value="Label" {% if selected_category == 'Label' %}checked{% endif %} onchange="toggleCustomInput()">
+                        <input type="radio" name="category_type" value="Label" {% if selected_category == 'Label' %}checked{% endif %}>
                         Label
                     </label>
                     <label>
-                        <input type="radio" name="category_type" value="Custom" {% if selected_category not in ['Activity', 'Label'] and selected_category %}checked{% endif %} onchange="toggleCustomInput()">
+                        <input type="radio" name="category_type" value="Custom" {% if selected_category not in ['Activity', 'Label'] and selected_category %}checked{% endif %}>
                         Custom Column:
                     </label>
                     <input type="text" name="custom_column" id="customColumnInput" placeholder="Enter column name" 
@@ -161,7 +175,7 @@
                     <label style="display:flex; align-items:center; gap:15px; font-weight:bold; color:#495057;">
                         <span style="font-size:1.1em;">📝 Show Assigned Task</span>
                         <div class="toggle-switch">
-                            <input type="checkbox" id="showAuthorSubtaskUI" onchange="toggleAuthorSubtaskUI()">
+                            <input type="checkbox" id="showAuthorSubtaskUI">
                             <span class="slider"></span>
                         </div>
                     </label>
@@ -172,7 +186,7 @@
                     <label style="display:flex; align-items:center; gap:15px; font-weight:bold; color:#495057;">
                         <span style="font-size:1.1em;">👥 Show Available Capacity</span>
                         <div class="toggle-switch">
-                            <input type="checkbox" id="showCapacityUI" onchange="toggleCapacityUI()">
+                            <input type="checkbox" id="showCapacityUI">
                             <span class="slider"></span>
                         </div>
                     </label>
@@ -184,7 +198,7 @@
                     <label style="display: flex; align-items: center; gap: 15px; font-weight: bold; color: #495057;">
                         <span style="font-size: 1.1em;">📊 Show Overtime Analysis</span>
                         <div class="toggle-switch">
-                            <input type="checkbox" id="showOvertimeUI" onchange="toggleOvertimeUI()">
+                            <input type="checkbox" id="showOvertimeUI">
                             <span class="slider"></span>
                         </div>
                     </label>
@@ -193,7 +207,7 @@
         
                 <!-- Overtime Calculation Settings Toggle -->
                 <div id="overtimeSettingsToggle" style="margin-top:15px; display: none;">
-                    <button type="button" onclick="toggleOvertimeSettings()" style="background: linear-gradient(135deg, #abd4e7 0%, #0077ff 100%); color: #856404; border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 4px rgba(255, 193, 7, 0.3); transition: all 0.3s ease;">
+                    <button type="button" id="overtimeSettingsBtn" style="background: linear-gradient(135deg, #abd4e7 0%, #0077ff 100%); color: #856404; border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; display: flex; align-items: center; gap: 8px; box-shadow: 0 2px 4px rgba(255, 193, 7, 0.3); transition: all 0.3s ease;">
                         <span style="font-size: 1.2em;">⚙️</span> 
                         <span id="overtimeToggleText">Show Overtime Calculation Settings</span>
                         <span id="overtimeToggleIcon" style="font-size: 0.8em;">▼</span>
@@ -280,10 +294,10 @@
                             <!-- Calendar UI -->
                             <div style="background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); min-width: 300px;">
                                 <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
-                                    <button type="button" onclick="changeMonth(-1)" style="padding:4px 8px;background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;cursor:pointer;color:#000 !important;">←</button>
+                                    <button type="button" id="prevMonthBtn" style="padding:4px 8px;background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;cursor:pointer;color:#000 !important;">←</button>
                                     <input type="month" id="holidayMonth" value="" style="min-width:150px;padding:4px;border:1px solid #dee2e6;border-radius:4px;">
-                                    <button type="button" onclick="changeMonth(1)" style="padding:4px 8px;background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;cursor:pointer;color:#000 !important;">→</button>
-                                    <button type="button" onclick="resetHolidays()" style="padding:4px 12px;margin-left:12px;background:#fff;border:1px solid #dc3545;color:#dc3545 !important;border-radius:4px;cursor:pointer;font-weight:bold;">Reset</button>
+                                    <button type="button" id="nextMonthBtn" style="padding:4px 8px;background:#f8f9fa;border:1px solid #dee2e6;border-radius:4px;cursor:pointer;color:#000 !important;">→</button>
+                                    <button type="button" id="resetHolidaysBtn" style="padding:4px 12px;margin-left:12px;background:#fff;border:1px solid #dc3545;color:#dc3545 !important;border-radius:4px;cursor:pointer;font-weight:bold;">Reset</button>
                                 </div>
                                 <table id="holidayCalendar" style="width:100%; margin-top: 10px; border-collapse: collapse;">
                                     <!-- Calendar will be rendered here -->
@@ -294,7 +308,7 @@
                             <div>
                                 <label for="holidayExcel" style="font-weight: 500;">Import Holidays (Excel):</label>
                                 <input type="file" id="holidayExcel" accept=".xlsx,.xls" style="margin-top: 5px;">
-                                <button type="button" onclick="uploadHolidayExcel()">Import</button>
+                                <button type="button" id="uploadHolidayExcelBtn">Import</button>
                                 <small style="display:block;color:#666;margin-top:4px;">Excel file should have dates in YYYY-MM-DD format</small>
                             </div>
                         </div>
@@ -305,16 +319,29 @@
                 </div>
 
                 <div class="download-buttons">
-                    <h3>Download Reports for: <span style="color: #dc3545;">{{ selected_author }}</span> ({{ selected_category or 'Activity' }}) - {{ selected_summary_type or 'Issue Summary' }}</h3>
-                    {% if selected_author == 'All' %}
-                    <a href="{{ url_for('download_bulk_reports', report_type='detailed', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}" class="button-link">Download All Authors Timesheets (Bulk)</a>
-                    {% else %}
-                    <a href="{{ url_for('download_report', report_type='detailed', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}" class="button-link">Download Detailed Timesheet</a>
+                    <h3>Download Reports for: <span style="color: #dc3545;">{% if selected_authors and selected_authors != ['All'] %}{{ selected_authors|join(', ') }}{% else %}All Authors{% endif %}</span> ({{ selected_category or 'Activity' }}) - {{ selected_summary_type or 'Issue Summary' }}</h3>
+                    
+                    {% if selected_authors == ['All'] or (selected_authors and selected_authors|length > 1) %}
+                    <a href="{{ url_for('download_bulk_reports', report_type='detailed', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(','), author=selected_authors|join(',')) }}" class="button-link" id="bulkDownloadBtn">Download All Authors Timesheets (Bulk)</a>
                     {% endif %}
-                    <a href="{{ url_for('download_report', report_type='summary', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}" class="button-link">Download Summary Report</a>
-                    <a href="{{ url_for('download_report', report_type='sprint_closure', author=selected_author, category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}" class="button-link">Download Sprint Closure Report</a>
-                    <button type="button" class="button-reportButton" id="reportButton" onclick="downloadSectionPDF()">Download Report</button>
+                    
+                    {% if selected_authors and 'All' not in selected_authors %}
+                        {% set author_params = [] %}
+                        {% for author in selected_authors %}
+                            {% set _ = author_params.append('author=' + author) %}
+                        {% endfor %}
+                        {% set author_query = author_params|join('&') %}
+                    {% else %}
+                        {% set author_query = 'author=All' %}
+                    {% endif %}
 
+                    <a href="{{ url_for('download_report', report_type='detailed', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}&{{ author_query }}" class="button-link">Download Detailed Timesheet</a>
+                    
+                    <a href="{{ url_for('download_report', report_type='summary', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}&{{ author_query }}" class="button-link">Download Summary Report</a>
+                    
+                    <a href="{{ url_for('download_report', report_type='sprint_closure', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}&{{ author_query }}" class="button-link">Download Sprint Closure Report</a>
+                    
+                    <button type="button" class="button-reportButton" id="reportButton">Download Report</button>
                 </div>
                 <button type="submit">Apply Filters</button>
             </form>
@@ -335,7 +362,7 @@
                     </div>
                 </div>
                 {% if logo_filename %}
-                <img src="{{ url_for('static', filename='uploads/' ~ logo_filename) }}" alt="Project Logo">
+                <img src="{{ url_for('serve_temp_file', filename=logo_filename) }}" alt="Project Logo">
                 {% endif %}
             </div>
              <p class="key-insight-container"> <b>Key Insights:</b> {{key_insights}} </p>
@@ -576,7 +603,7 @@
                         </table>
                     </div>
 
-                    {% if selected_author == "All" and overtime_list and overtime_list|length > 0 %}
+                    {% if selected_authors == ["All"] and overtime_list and overtime_list|length > 0 %}
                     <div id="overTimeAuthor" class="table-container" style="display: none;">
                         <h3>Overtime by Author</h3>
                         <table class="styled-table">
@@ -600,7 +627,7 @@
 
            </div>
           
-        {% if selected_author == "All" and author_task_data %} 
+        {% if author_task_data %} 
         <!-- Author Subtask Count Table -->
         <div id="author-task-container" class="author-task-container" style="display: none;">
             <h3>Task Assigned</h3>

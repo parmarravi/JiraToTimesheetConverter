@@ -1,27 +1,659 @@
 // --- Main JS for Jira Timesheet UI ---
+import { dbManager } from "./db.js";
 
 // State - with safe defaults
 let holidays = Array.isArray(serverData?.holidays) ? serverData.holidays : [];
 let selectedMonth = null;
 let selectedYear = null;
+let isInitializing = true; // Flag to prevent form submissions during initialization
+
+// Initialize IndexedDB
+let dbInitialized = false;
+
+// Initialize database
+async function initializeDB() {
+  if (!dbInitialized) {
+    try {
+      await dbManager.initDB();
+      dbInitialized = true;
+      console.log("Database initialized successfully");
+    } catch (error) {
+      console.error("Failed to initialize database:", error);
+      throw error;
+    }
+  }
+}
+
+// Function to save all form states to localStorage
+function saveAllFormStates() {
+  const authorSubtaskToggle = document.getElementById("showAuthorSubtaskUI");
+  const capacityToggle = document.getElementById("showCapacityUI");
+  const overtimeToggle = document.getElementById("showOvertimeUI");
+
+  // Get category type
+  const categoryTypeRadios = document.querySelectorAll(
+    'input[name="category_type"]'
+  );
+  let categoryType = "Activity"; // Default value
+  let customColumn = "";
+  categoryTypeRadios.forEach((radio) => {
+    if (radio.checked) {
+      if (radio.value === "Custom") {
+        const customInput = document.getElementById("customColumnInput");
+        categoryType = "Custom";
+        customColumn = customInput ? customInput.value : "";
+      } else {
+        categoryType = radio.value;
+      }
+    }
+  });
+
+  // Get summary type
+  const summaryTypeRadios = document.querySelectorAll(
+    'input[name="summary_type"]'
+  );
+  let summaryType = "Issue Summary"; // Default value
+  summaryTypeRadios.forEach((radio) => {
+    if (radio.checked) {
+      summaryType = radio.value;
+    }
+  });
+
+  // Get working days
+  const workingDaysCheckboxes = document.querySelectorAll(
+    'input[name="working_days"]'
+  );
+  const workingDays = [];
+  workingDaysCheckboxes.forEach((checkbox) => {
+    if (checkbox.checked) {
+      workingDays.push(checkbox.value);
+    }
+  });
+
+  // Default working days if none selected
+  const defaultWorkingDays =
+    workingDays.length > 0
+      ? workingDays
+      : ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+
+  // Get other overtime settings
+  const workingHoursInput = document.querySelector(
+    'input[name="working_hours"]'
+  );
+  const leaveDaysInput = document.querySelector('input[name="leave_days"]');
+  const holidayDaysInput = document.querySelector('input[name="holiday_days"]');
+
+  // Get overtime settings panel state
+  const overtimeSettingsPanel = document.getElementById(
+    "overtimeSettingsPanel"
+  );
+  const showOvertimeSettings = overtimeSettingsPanel
+    ? overtimeSettingsPanel.style.display !== "none"
+    : false;
+
+  const formStates = {
+    // Toggle states
+    toggles: {
+      showAuthorSubtask: authorSubtaskToggle
+        ? authorSubtaskToggle.checked
+        : false,
+      showCapacity: capacityToggle ? capacityToggle.checked : false,
+      showOvertime: overtimeToggle ? overtimeToggle.checked : false,
+    },
+    // Category and summary settings with defaults
+    categoryType: categoryType,
+    customColumn: customColumn,
+    summaryType: summaryType,
+    // Overtime settings
+    overtimeSettings: {
+      showSettings: showOvertimeSettings,
+      workingDays: defaultWorkingDays,
+      workingHours: workingHoursInput
+        ? parseFloat(workingHoursInput.value) || 8
+        : 8,
+      leaveDays: leaveDaysInput ? parseFloat(leaveDaysInput.value) || 0 : 0,
+      holidayDays: holidayDaysInput
+        ? parseFloat(holidayDaysInput.value) || 0
+        : 0,
+    },
+  };
+
+  localStorage.setItem("formStates", JSON.stringify(formStates));
+  console.log("Saved form states:", formStates);
+}
+
+// Function to load all form states from localStorage
+function loadAllFormStates() {
+  try {
+    const savedStates = localStorage.getItem("formStates");
+    if (savedStates) {
+      return JSON.parse(savedStates);
+    }
+  } catch (error) {
+    console.error("Error loading form states from localStorage:", error);
+  }
+
+  // Return default states if no saved states or error
+  return {
+    toggles: {
+      showAuthorSubtask: false,
+      showCapacity: false,
+      showOvertime: false,
+    },
+    categoryType: "Activity",
+    customColumn: "",
+    summaryType: "Issue Summary",
+    overtimeSettings: {
+      showSettings: false,
+      workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+      workingHours: 8,
+      leaveDays: 0,
+      holidayDays: 0,
+    },
+  };
+}
+
+// Function to save toggle states to localStorage (backwards compatibility)
+function saveToggleStates() {
+  saveAllFormStates(); // Use the comprehensive function
+}
+
+// Function to load toggle states from localStorage (backwards compatibility)
+function loadToggleStates() {
+  const allStates = loadAllFormStates();
+  return allStates.toggles;
+}
+
+// Function to restore UI state
+function restoreUIState() {
+  const urlParams = new URLSearchParams(window.location.search);
+
+  // Restore author selection
+  const selectAllCheckbox = document.getElementById("selectAllAuthors");
+  const authorCheckboxes = document.querySelectorAll(".author-checkbox");
+
+  // Get selected authors from URL parameters
+  const selectedAuthors = urlParams.getAll("author");
+
+  // Temporarily disable event handling during restoration
+  const originalInitializing = isInitializing;
+  isInitializing = true;
+
+  // If no authors in URL or only 'All' is selected
+  if (
+    !selectedAuthors.length ||
+    (selectedAuthors.length === 1 && selectedAuthors[0] === "All")
+  ) {
+    if (selectAllCheckbox) {
+      selectAllCheckbox.checked = true;
+      authorCheckboxes.forEach((checkbox) => {
+        checkbox.checked = true;
+      });
+    }
+  } else {
+    // Uncheck "Select All" first
+    if (selectAllCheckbox) {
+      selectAllCheckbox.checked = false;
+    }
+
+    // Set individual author checkboxes based on URL
+    authorCheckboxes.forEach((checkbox) => {
+      checkbox.checked = selectedAuthors.includes(checkbox.value);
+    });
+  }
+
+  // Load all saved form states
+  const savedFormStates = loadAllFormStates();
+
+  // Restore toggle states
+  const authorSubtaskToggle = document.getElementById("showAuthorSubtaskUI");
+  const capacityToggle = document.getElementById("showCapacityUI");
+  const overtimeToggle = document.getElementById("showOvertimeUI");
+
+  if (authorSubtaskToggle) {
+    authorSubtaskToggle.checked = savedFormStates.toggles.showAuthorSubtask;
+  }
+  if (capacityToggle) {
+    capacityToggle.checked = savedFormStates.toggles.showCapacity;
+  }
+  if (overtimeToggle) {
+    overtimeToggle.checked = savedFormStates.toggles.showOvertime;
+  }
+
+  // Restore category type (only if not set by URL parameters)
+  if (!urlParams.get("category_type")) {
+    const categoryTypeRadios = document.querySelectorAll(
+      'input[name="category_type"]'
+    );
+    categoryTypeRadios.forEach((radio) => {
+      if (savedFormStates.categoryType === "Custom") {
+        if (radio.value === "Custom") {
+          radio.checked = true;
+          const customInput = document.getElementById("customColumnInput");
+          if (customInput) {
+            customInput.value = savedFormStates.customColumn;
+            customInput.disabled = false;
+          }
+        } else {
+          radio.checked = false;
+        }
+      } else {
+        radio.checked = radio.value === savedFormStates.categoryType;
+      }
+    });
+  }
+
+  // Restore summary type (only if not set by URL parameters)
+  if (!urlParams.get("summary_type")) {
+    const summaryTypeRadios = document.querySelectorAll(
+      'input[name="summary_type"]'
+    );
+    summaryTypeRadios.forEach((radio) => {
+      radio.checked = radio.value === savedFormStates.summaryType;
+    });
+  }
+
+  // Restore overtime settings (only if not set by URL parameters or form data)
+  if (!urlParams.get("working_hours")) {
+    const workingHoursInput = document.querySelector(
+      'input[name="working_hours"]'
+    );
+    if (workingHoursInput) {
+      workingHoursInput.value = savedFormStates.overtimeSettings.workingHours;
+    }
+  }
+
+  if (!urlParams.get("leave_days")) {
+    const leaveDaysInput = document.querySelector('input[name="leave_days"]');
+    if (leaveDaysInput) {
+      leaveDaysInput.value = savedFormStates.overtimeSettings.leaveDays;
+    }
+  }
+
+  if (!urlParams.get("holiday_days")) {
+    const holidayDaysInput = document.querySelector(
+      'input[name="holiday_days"]'
+    );
+    if (holidayDaysInput) {
+      holidayDaysInput.value = savedFormStates.overtimeSettings.holidayDays;
+    }
+  }
+
+  // Restore working days (only if not set by URL parameters)
+  if (!urlParams.getAll("working_days").length) {
+    const workingDaysCheckboxes = document.querySelectorAll(
+      'input[name="working_days"]'
+    );
+    workingDaysCheckboxes.forEach((checkbox) => {
+      checkbox.checked = savedFormStates.overtimeSettings.workingDays.includes(
+        checkbox.value
+      );
+    });
+  }
+
+  // Call toggle functions to update UI based on current checkbox states
+  toggleAuthorSubtaskUI();
+  toggleCapacityUI();
+  toggleOvertimeUI();
+
+  // Restore overtime settings panel state
+  if (
+    savedFormStates.overtimeSettings.showSettings &&
+    savedFormStates.toggles.showOvertime
+  ) {
+    const panel = document.getElementById("overtimeSettingsPanel");
+    const toggleText = document.getElementById("overtimeToggleText");
+    const toggleIcon = document.getElementById("overtimeToggleIcon");
+    if (panel) {
+      panel.style.display = "block";
+      if (toggleText)
+        toggleText.textContent = "Hide Overtime Calculation Settings";
+      if (toggleIcon) toggleIcon.textContent = "▲";
+    }
+  }
+
+  // Restore initialization flag
+  isInitializing = originalInitializing;
+}
+
+// Function to preserve UI state when submitting form
+function preserveUIState(event) {
+  const form = event.target;
+
+  // Add toggle states to form
+  const authorSubtaskToggle = document.getElementById("showAuthorSubtaskUI");
+  const capacityToggle = document.getElementById("showCapacityUI");
+  const overtimeToggle = document.getElementById("showOvertimeUI");
+
+  if (authorSubtaskToggle) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "show_author_subtask";
+    input.value = authorSubtaskToggle.checked;
+    form.appendChild(input);
+  }
+
+  if (capacityToggle) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "show_capacity";
+    input.value = capacityToggle.checked;
+    form.appendChild(input);
+  }
+
+  if (overtimeToggle) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "show_overtime";
+    input.value = overtimeToggle.checked;
+    form.appendChild(input);
+  }
+}
+
+// Function to initialize localStorage with default values if none exist
+function initializeDefaultFormStates() {
+  const existingStates = localStorage.getItem("formStates");
+
+  // Only set defaults if no saved states exist
+  if (!existingStates) {
+    const defaultStates = {
+      toggles: {
+        showAuthorSubtask: false,
+        showCapacity: false,
+        showOvertime: false,
+      },
+      categoryType: "Activity",
+      customColumn: "",
+      summaryType: "Issue Summary",
+      overtimeSettings: {
+        showSettings: false,
+        workingDays: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+        workingHours: 8,
+        leaveDays: 0,
+        holidayDays: 0,
+      },
+    };
+
+    localStorage.setItem("formStates", JSON.stringify(defaultStates));
+    console.log(
+      "Initialized localStorage with default form states:",
+      defaultStates
+    );
+
+    // Set the default radio buttons in the DOM
+    setDefaultRadioButtons();
+  }
+}
+
+// Function to set default radio buttons in the DOM
+function setDefaultRadioButtons() {
+  // Set Activity as default category type
+  const activityRadio = document.querySelector(
+    'input[name="category_type"][value="Activity"]'
+  );
+  if (activityRadio) {
+    activityRadio.checked = true;
+  }
+
+  // Set Issue Summary as default summary type
+  const issueSummaryRadio = document.querySelector(
+    'input[name="summary_type"][value="Issue Summary"]'
+  );
+  if (issueSummaryRadio) {
+    issueSummaryRadio.checked = true;
+  }
+
+  // Disable custom column input by default
+  const customInput = document.getElementById("customColumnInput");
+  if (customInput) {
+    customInput.disabled = true;
+    customInput.value = "";
+  }
+}
 
 // DOM Ready
-document.addEventListener("DOMContentLoaded", function () {
-  restoreOvertimeState();
-  setCalendarToCurrentMonth();
-  setupEventListeners();
-  initializeCharts();
-  paginationSummaryTable();
-  const displayDiv = document.getElementById("date-display");
-  const startDate = "{{ start_date }}";
-  const endDate = "{{ end_date }}";
+document.addEventListener("DOMContentLoaded", async function () {
+  try {
+    // First initialize the database
+    await initializeDB();
 
-  if (displayDiv) {
-    displayDiv.textContent = formatDateRange(startDate, endDate);
+    // Initialize default form states in localStorage if none exist
+    initializeDefaultFormStates();
+
+    // Restore UI states
+    restoreUIState();
+
+    // Initialize calendar and other UI elements
+    setCalendarToCurrentMonth();
+    setupEventListeners();
+
+    // Wait for a small delay to ensure DOM is ready
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Initialize charts
+    await initializeCharts();
+    paginationSummaryTable();
+
+    // Set date range display
+    const displayDiv = document.getElementById("date-display");
+    const startDate = "{{ start_date }}";
+    const endDate = "{{ end_date }}";
+
+    if (displayDiv) {
+      displayDiv.textContent = formatDateRange(startDate, endDate);
+    }
+
+    // Mark initialization as complete
+    isInitializing = false;
+  } catch (error) {
+    console.error("Error during initialization:", error);
+    // Mark initialization as complete even if there was an error
+    isInitializing = false;
+    // Show user-friendly error message
+    // const errorDiv = document.createElement("div");
+    // errorDiv.style.cssText =
+    //   "background-color: #ffebee; color: #c62828; padding: 10px; margin: 10px; border-radius: 4px;";
+    // errorDiv.textContent =
+    //   "Failed to initialize the application. Please refresh the page or contact support if the issue persists.";
+    // document.body.insertBefore(errorDiv, document.body.firstChild);
   }
 });
 
 function setupEventListeners() {
+  // Set up form submission handler
+  const filterForm = document.querySelector(".filter-form");
+  if (filterForm) {
+    filterForm.addEventListener("submit", preserveUIState);
+  }
+
+  // Set up author selection handlers
+  const selectAllCheckbox = document.getElementById("selectAllAuthors");
+  const authorCheckboxes = document.querySelectorAll(".author-checkbox");
+
+  function updateBulkDownloadVisibility() {
+    const bulkDownloadBtn = document.getElementById("bulkDownloadBtn");
+    if (!bulkDownloadBtn) return;
+
+    const selectedCount = Array.from(authorCheckboxes).filter(
+      (cb) => cb.checked
+    ).length;
+    const showBulkDownload = selectAllCheckbox.checked || selectedCount > 1;
+    bulkDownloadBtn.style.display = showBulkDownload ? "inline-block" : "none";
+  }
+
+  function updateAuthorSelectionState(shouldSubmit = false) {
+    if (!selectAllCheckbox) return;
+
+    const selectedAuthors = Array.from(authorCheckboxes)
+      .filter((checkbox) => checkbox.checked)
+      .map((checkbox) => checkbox.value);
+
+    // If no authors are selected, select all authors
+    if (selectedAuthors.length === 0) {
+      selectAllCheckbox.checked = true;
+      authorCheckboxes.forEach((checkbox) => {
+        checkbox.checked = true;
+        checkbox.disabled = true;
+      });
+    }
+
+    // Update bulk download button visibility
+    updateBulkDownloadVisibility();
+
+    // Only submit the form if explicitly requested
+    if (shouldSubmit) {
+      document.querySelector(".filter-form").submit();
+    }
+  }
+
+  if (selectAllCheckbox) {
+    selectAllCheckbox.addEventListener("change", function () {
+      if (isInitializing) {
+        return;
+      }
+
+      // When "Select All" is checked, check and disable all others.
+      // When unchecked, enable all others but leave them checked to allow deselection.
+      authorCheckboxes.forEach((checkbox) => {
+        checkbox.checked = true; // Always ensure all are checked when this control is toggled
+        checkbox.disabled = this.checked;
+      });
+
+      updateBulkDownloadVisibility();
+
+      // Removed automatic form submission - only submit on Filter button click
+    });
+  }
+
+  if (authorCheckboxes) {
+    authorCheckboxes.forEach((checkbox) => {
+      checkbox.addEventListener("change", function () {
+        if (isInitializing) {
+          return;
+        }
+
+        const checkedCount = Array.from(authorCheckboxes).filter(
+          (cb) => cb.checked
+        ).length;
+        const allCount = authorCheckboxes.length;
+
+        if (checkedCount === 0) {
+          // Prevent the last checkbox from being unchecked
+          this.checked = true;
+          // No submission needed as state doesn't change
+          return;
+        }
+
+        if (checkedCount === allCount) {
+          // If all are checked, revert to "Select All" mode
+          selectAllCheckbox.checked = true;
+          authorCheckboxes.forEach((cb) => (cb.disabled = true));
+        } else {
+          // If some are unchecked, ensure "Select All" is also unchecked
+          selectAllCheckbox.checked = false;
+        }
+
+        updateBulkDownloadVisibility();
+        // Removed automatic form submission - only submit on Filter button click
+      });
+    });
+  }
+
+  // Initial state setup - don't submit form on page load
+  updateAuthorSelectionState(false);
+
+  // Set up toggle UI handlers
+  const authorSubtaskToggle = document.getElementById("showAuthorSubtaskUI");
+  if (authorSubtaskToggle) {
+    authorSubtaskToggle.addEventListener("change", toggleAuthorSubtaskUI);
+  }
+
+  const capacityToggle = document.getElementById("showCapacityUI");
+  if (capacityToggle) {
+    capacityToggle.addEventListener("change", toggleCapacityUI);
+  }
+
+  const overtimeToggle = document.getElementById("showOvertimeUI");
+  if (overtimeToggle) {
+    overtimeToggle.addEventListener("change", toggleOvertimeUI);
+  }
+
+  // Set up all button handlers
+  const overtimeSettingsBtn = document.getElementById("overtimeSettingsBtn");
+  if (overtimeSettingsBtn) {
+    overtimeSettingsBtn.addEventListener("click", toggleOvertimeSettings);
+  }
+
+  const prevMonthBtn = document.getElementById("prevMonthBtn");
+  if (prevMonthBtn) {
+    prevMonthBtn.addEventListener("click", () => changeMonth(-1));
+  }
+
+  const nextMonthBtn = document.getElementById("nextMonthBtn");
+  if (nextMonthBtn) {
+    nextMonthBtn.addEventListener("click", () => changeMonth(1));
+  }
+
+  const resetHolidaysBtn = document.getElementById("resetHolidaysBtn");
+  if (resetHolidaysBtn) {
+    resetHolidaysBtn.addEventListener("click", resetHolidays);
+  }
+
+  const uploadHolidayExcelBtn = document.getElementById(
+    "uploadHolidayExcelBtn"
+  );
+  if (uploadHolidayExcelBtn) {
+    uploadHolidayExcelBtn.addEventListener("click", uploadHolidayExcel);
+  }
+
+  // Setup report button handler
+  const reportButton = document.getElementById("reportButton");
+  if (reportButton) {
+    console.log("Setting up report button event listener");
+    reportButton.addEventListener("click", downloadSectionPDF);
+  } else {
+    console.log("Report button not found in DOM");
+  }
+
+  // Category type radio buttons
+  const categoryRadios = document.querySelectorAll(
+    'input[name="category_type"]'
+  );
+  categoryRadios.forEach((radio) => {
+    radio.addEventListener("change", function () {
+      toggleCustomInput();
+      saveAllFormStates(); // Save when category changes
+    });
+  });
+
+  // Summary type radio buttons
+  const summaryRadios = document.querySelectorAll('input[name="summary_type"]');
+  summaryRadios.forEach((radio) => {
+    radio.addEventListener("change", function () {
+      saveAllFormStates(); // Save when summary type changes
+    });
+  });
+
+  // Overtime settings inputs
+  const overtimeInputs = document.querySelectorAll(
+    'input[name="working_hours"], input[name="leave_days"], input[name="holiday_days"]'
+  );
+  overtimeInputs.forEach((input) => {
+    input.addEventListener("change", function () {
+      saveAllFormStates(); // Save when overtime settings change
+    });
+  });
+
+  // Working days checkboxes
+  const workingDaysCheckboxes = document.querySelectorAll(
+    'input[name="working_days"]'
+  );
+  workingDaysCheckboxes.forEach((checkbox) => {
+    checkbox.addEventListener("change", function () {
+      saveAllFormStates(); // Save when working days change
+    });
+  });
+
   // Custom column input
   const customInput = document.getElementById("customColumnInput");
   if (customInput) {
@@ -30,25 +662,63 @@ function setupEventListeners() {
         'input[name="category_type"][value="Custom"]'
       ).checked = true;
       this.disabled = false;
+      saveAllFormStates(); // Save when custom column is focused
+    });
+
+    customInput.addEventListener("input", function () {
+      saveAllFormStates(); // Save when custom column content changes
     });
   }
+
   // Form submit
   const form = document.querySelector("form.filter-form");
   if (form) {
-    form.addEventListener("submit", function (e) {
-      const customRadio = document.querySelector(
-        'input[name="category_type"][value="Custom"]'
-      );
-      const customInput = document.getElementById("customColumnInput");
-      if (
-        customRadio &&
-        customInput &&
-        customRadio.checked &&
-        customInput.value.trim()
-      ) {
-        customRadio.value = customInput.value.trim();
+    form.addEventListener("submit", async function (e) {
+      console.log("Form submitted");
+
+      // Log selected authors
+      const selectAllCheckbox = document.getElementById("selectAllAuthors");
+      const authorCheckboxes = document.querySelectorAll(".author-checkbox");
+      const selectedAuthors = [];
+
+      if (selectAllCheckbox && selectAllCheckbox.checked) {
+        selectedAuthors.push("All");
+      } else {
+        authorCheckboxes.forEach((checkbox) => {
+          if (checkbox.checked) {
+            selectedAuthors.push(checkbox.value);
+          }
+        });
       }
-      preserveOvertimeState();
+
+      console.log("Selected authors:", selectedAuthors);
+      console.log("Total selected count:", selectedAuthors.length);
+
+      try {
+        // Handle custom input if present
+        const customRadio = document.querySelector(
+          'input[name="category_type"][value="Custom"]'
+        );
+        const customInput = document.getElementById("customColumnInput");
+        if (
+          customRadio &&
+          customInput &&
+          customRadio.checked &&
+          customInput.value.trim()
+        ) {
+          customRadio.value = customInput.value.trim();
+        }
+
+        // Save all states before submission
+        saveAllFormStates();
+
+        // Clean up charts if needed (function may not exist, so check first)
+        if (typeof cleanupCharts === "function") {
+          cleanupCharts();
+        }
+      } catch (error) {
+        console.error("Error during form submission:", error);
+      }
     });
   }
   // Holiday month change
@@ -69,23 +739,30 @@ function setupEventListeners() {
   // }
 }
 
-function toggleAuthorSubtaskUI() {
+async function toggleAuthorSubtaskUI() {
   console.log("Toggling Author Subtask UI");
   const section = document.getElementById("author-task-container");
   const toggle = document.getElementById("showAuthorSubtaskUI");
-  section.style.display = toggle.checked ? "block" : "none";
-  localStorage.setItem("authorSubtaskUIEnabled", toggle.checked);
+  console.log("Toggling Author Subtask UI", section);
+  if (section) {
+    section.style.display = toggle.checked ? "block" : "none";
+    // Save all form states to localStorage
+    saveAllFormStates();
+  }
 }
 
-function toggleCapacityUI() {
+async function toggleCapacityUI() {
   console.log("Toggling Capacity UI");
   const section = document.getElementById("capacityTableSection");
   const toggle = document.getElementById("showCapacityUI");
   section.style.display = toggle.checked ? "block" : "none";
-  localStorage.setItem("availableCapacityUIEnabled", toggle.checked);
+
+  // Save all form states to localStorage
+  saveAllFormStates();
 }
+
 // Overtime UI toggle
-function toggleOvertimeUI() {
+async function toggleOvertimeUI() {
   const checkbox = document.getElementById("showOvertimeUI");
   const settingsToggle = document.getElementById("overtimeSettingsToggle");
   const overtimeChart = document.getElementById("overtimeChart");
@@ -93,7 +770,9 @@ function toggleOvertimeUI() {
   const burnoutAlert = document.getElementById("burnoutAlert");
   const overTimeAuthor = document.getElementById("overTimeAuthor");
 
-  localStorage.setItem("overtimeUIEnabled", checkbox.checked);
+  // Save all form states to localStorage
+  saveAllFormStates();
+
   if (checkbox.checked) {
     settingsToggle.style.display = "block";
     if (overtimeChart) overtimeChart.style.display = "block";
@@ -115,56 +794,6 @@ function toggleOvertimeUI() {
     if (toggleIcon) toggleIcon.textContent = "▼";
   }
 }
-function restoreOvertimeState() {
-  const savedState = localStorage.getItem("overtimeUIEnabled");
-  const savedStateAvailableCapacity = localStorage.getItem(
-    "availableCapacityUIEnabled"
-  );
-
-  const savedStateAuthorSubTaskUiEnabled = localStorage.getItem(
-    "authorSubtaskUIEnabled"
-  );
-
-  if (savedState === "true") {
-    const checkbox = document.getElementById("showOvertimeUI");
-    if (checkbox) {
-      checkbox.checked = true;
-      toggleOvertimeUI();
-    }
-  }
-
-  if (savedStateAvailableCapacity === "true") {
-    const checkboxAvailableCapacity = document.getElementById("showCapacityUI");
-    if (checkboxAvailableCapacity) {
-      checkboxAvailableCapacity.checked = true;
-      toggleCapacityUI();
-    }
-  }
-
-  if (savedStateAuthorSubTaskUiEnabled === "true") {
-    const checkboxAuthorSubTaskUiEnabled = document.getElementById(
-      "showAuthorSubtaskUI"
-    );
-    if (checkboxAuthorSubTaskUiEnabled) {
-      checkboxAuthorSubTaskUiEnabled.checked = true;
-      toggleAuthorSubtaskUI();
-    }
-  }
-}
-function preserveOvertimeState() {
-  const checkbox = document.getElementById("showOvertimeUI");
-  if (checkbox) {
-    localStorage.setItem("overtimeUIEnabled", checkbox.checked);
-  }
-
-  const checkboxCapacityUI = document.getElementById("showCapacityUI");
-  if (checkboxCapacityUI) {
-    localStorage.setItem(
-      "availableCapacityUIEnabled",
-      checkboxCapacityUI.checked
-    );
-  }
-}
 
 function toggleOvertimeSettings() {
   const panel = document.getElementById("overtimeSettingsPanel");
@@ -179,6 +808,8 @@ function toggleOvertimeSettings() {
     toggleText.textContent = "Show Overtime Calculation Settings";
     toggleIcon.textContent = "▼";
   }
+  // Save the settings panel state
+  saveAllFormStates();
 }
 function toggleCustomInput() {
   const customRadio = document.querySelector(
@@ -260,6 +891,9 @@ function toggleHoliday(dateStr) {
     body: JSON.stringify({ holidays }),
   }).then(() => renderHolidayCalendar(selectedMonth, selectedYear));
 }
+
+// Make toggleHoliday globally accessible
+window.toggleHoliday = toggleHoliday;
 function setCalendarToCurrentMonth() {
   const now = new Date();
   const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
@@ -329,6 +963,8 @@ function resetHolidays() {
 
 // --- Chart Logic ---
 function initializeCharts() {
+  console.log("Initializing initializeCharts...");
+
   if (
     serverData?.weeklyOvertimeData?.weeks &&
     document.getElementById("weeklyOvertimeChart")
@@ -711,12 +1347,33 @@ function initializeStrainScoreChart() {
 }
 
 function paginationSummaryTable() {
+  // Get required elements
   const rows = document.querySelectorAll("#summary-table tbody tr");
   const rowsPerPage = 10;
   const totalRows = rows.length;
   const totalPages = Math.ceil(totalRows / rowsPerPage);
-  const info = document.getElementById("summary-info");
-  const controls = document.getElementById("pagination-controls");
+
+  // Ensure required elements exist
+  let info = document.getElementById("summary-info");
+  let controls = document.getElementById("pagination-controls");
+
+  // Create elements if they don't exist
+  if (!info) {
+    info = document.createElement("div");
+    info.id = "summary-info";
+    const table = document.getElementById("summary-table");
+    if (table) {
+      table.parentElement.insertBefore(info, table.nextSibling);
+    }
+  }
+
+  if (!controls) {
+    controls = document.createElement("div");
+    controls.id = "pagination-controls";
+    if (info) {
+      info.parentElement.insertBefore(controls, info.nextSibling);
+    }
+  }
 
   let currentPage = 1;
 
@@ -728,10 +1385,15 @@ function paginationSummaryTable() {
       row.style.display = index >= start && index < end ? "" : "none";
     });
 
-    info.textContent = `Showing ${Math.min(start + 1, totalRows)}–${Math.min(
-      end,
-      totalRows
-    )} of ${totalRows} entries`;
+    // Check if info element exists before updating
+    if (info) {
+      info.textContent = `Showing ${Math.min(start + 1, totalRows)}–${Math.min(
+        end,
+        totalRows
+      )} of ${totalRows} entries`;
+    } else {
+      console.warn("Info element not found in the DOM");
+    }
 
     renderControls();
   }
@@ -831,157 +1493,162 @@ function forceSectionNewPage(sectionId) {
     section.classList.add("page-break-before");
   }
 }
+
 async function downloadSectionPDF() {
   console.log("Starting PDF generation...");
-  const element = document.getElementById("reportSection");
-
-  // Load saved states from localStorage
-  const savedStateOverTime = localStorage.getItem("overtimeUIEnabled");
-  const savedStateCapacityUi = localStorage.getItem(
-    "availableCapacityUIEnabled"
-  );
-
-  await convertCanvasesToImages(element);
-
-  // Clone the element
-  const clone = element.cloneNode(true);
-
-  // Expand all rows in clone
-  const cloneRows = clone.querySelectorAll("#summary-table tbody tr");
-  cloneRows.forEach((row) => (row.style.display = "")); // show all rows
-
-  // Replace canvases in clone with images
-  await convertCanvasesToImages(clone);
-
-  // Force wide tables to fit within A4 portrait width
-  const tables = clone.querySelectorAll("table");
-  tables.forEach((table) => {
-    table.style.fontSize = "11px"; // adjust as needed (e.g. 9px, 11px)
-    table.style.padding = "2px"; // shrink cell padding
-    table.style.maxWidth = "100%";
-    table.style.width = "100%";
-    table.style.wordBreak = "break-word";
-    table.style.tableLayout = "auto"; // let columns shrink
-    table.style.overflowX = "auto";
-  });
-
-  // Results section page break (only when capacity is true)
-  if (savedStateCapacityUi === "true") {
-    const resultsSection = clone.querySelector("#results-container");
-    if (resultsSection) {
-      resultsSection.classList.add("page-break-before");
-    }
-  }
-
-  // Overtime section page break (only if exactly one of them is true)
-  if ((savedStateCapacityUi === "true") !== (savedStateOverTime === "true")) {
-    const overtimeSection = clone.querySelector("#overtimeSection");
-    if (overtimeSection) {
-      overtimeSection.classList.add("page-break-before");
-    }
-  }
-
-  // Summary section page break (only if capacity true and overtime false)
-  if (savedStateCapacityUi !== "true" && savedStateOverTime === "false") {
-    const sectionSummaryInClone = clone.querySelector("#summary-container");
-    if (sectionSummaryInClone) {
-      sectionSummaryInClone.classList.add("page-break-before");
-    }
-  }
-
-  // Hide pagination in the clone
-  const paginationInClone = clone.querySelector("#pagination-controls");
-  if (paginationInClone) paginationInClone.style.display = "none";
-
-  if (savedStateOverTime == "false") {
-    console.log("Hiding overtime section in PDF");
-    const overtimeSection = clone.querySelector("#overtimeSection");
-    overtimeSection.style.display = "none";
-  } else {
-    const overTimeAuthorInClone = clone.querySelector("#overTimeAuthor");
-    if (overTimeAuthorInClone) {
-      overTimeAuthorInClone.classList.add("page-break-before");
-    }
-  }
-
-  // 🟢 Remove hidden elements
-  clone.querySelectorAll("*").forEach((el) => {
-    const style = window.getComputedStyle(el);
-    if (style.display === "none" || style.visibility === "hidden") el.remove();
-  });
-
-  // 🟢 Remove empty elements to prevent blank pages
-  clone.querySelectorAll("div, section, tr").forEach((el) => {
-    if (isVisiblyEmpty(el)) el.remove();
-  });
-
-  // 🟢 Extra: remove accidental blank page-break containers
-  clone.querySelectorAll(".page-break-before").forEach((el) => {
-    if (!el.textContent.trim() && el.children.length === 0) {
-      el.remove();
-    }
-  });
-  // Hide clone but keep measurable
-  // clone.style.position = "absolute";
-  // clone.style.top = "0";
-  // clone.style.left = "0";
-  // clone.style.width = "100%";
-  // clone.style.visibility = "hidden";
-
-  // Hidden wrapper
-  const wrapper = document.createElement("div");
-  wrapper.style.position = "fixed";
-  wrapper.style.top = "0";
-  wrapper.style.left = "0";
-  wrapper.style.width = "100%";
-  wrapper.style.background = "#fff";
-  wrapper.style.zIndex = "-1";
-  wrapper.style.visibility = "hidden";
-
-  // Force table/container to shrink to page width
-  clone.style.maxWidth = "100%";
-  clone.style.overflowX = "auto";
-
-  // clone.style.transform = "scale(0.9)"; // adjust scale factor if needed
-  // clone.style.transformOrigin = "top left";
-
-  wrapper.appendChild(clone);
-  document.body.appendChild(wrapper);
-
-  const opt = {
-    margin: 0.3,
-    filename: "report.pdf",
-    image: { type: "jpeg", quality: 0.98 },
-    html2canvas: {
-      scale: 3, // higher scale improves clarity
-      logging: true,
-      useCORS: true,
-      scrollX: 0,
-      scrollY: 0,
-      windowWidth: clone.scrollWidth, // ensures wide table fits
-    },
-    jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
-  };
-
   try {
-    // 🟢 FINAL CLEANUP before rendering
-    const blankPages = clone.querySelectorAll(
-      "div, section,overtimeSection,capacityTableSection"
-    );
-    blankPages.forEach((el) => {
+    const element = document.getElementById("reportSection");
+
+    // Load saved states from localStorage
+    const formStates = loadAllFormStates();
+    const savedStateOverTime = formStates.toggles.showOvertime;
+    const savedStateCapacityUi = formStates.toggles.showCapacity;
+
+    await convertCanvasesToImages(element);
+
+    // Clone the element
+    const clone = element.cloneNode(true);
+
+    // Expand all rows in clone
+    const cloneRows = clone.querySelectorAll("#summary-table tbody tr");
+    cloneRows.forEach((row) => (row.style.display = "")); // show all rows
+
+    // Replace canvases in clone with images
+    await convertCanvasesToImages(clone);
+
+    // Force wide tables to fit within A4 portrait width
+    const tables = clone.querySelectorAll("table");
+    tables.forEach((table) => {
+      table.style.fontSize = "11px"; // adjust as needed (e.g. 9px, 11px)
+      table.style.padding = "2px"; // shrink cell padding
+      table.style.maxWidth = "100%";
+      table.style.width = "100%";
+      table.style.wordBreak = "break-word";
+      table.style.tableLayout = "auto"; // let columns shrink
+      table.style.overflowX = "auto";
+    });
+
+    // Results section page break (only when capacity is true)
+    if (savedStateCapacityUi === true) {
+      const resultsSection = clone.querySelector("#results-container");
+      if (resultsSection) {
+        resultsSection.classList.add("page-break-before");
+      }
+    }
+
+    // Overtime section page break (only if exactly one of them is true)
+    if (savedStateCapacityUi !== savedStateOverTime) {
+      const overtimeSection = clone.querySelector("#overtimeSection");
+      if (overtimeSection) {
+        overtimeSection.classList.add("page-break-before");
+      }
+    }
+
+    // Summary section page break (only if capacity true and overtime false)
+    if (savedStateCapacityUi !== true && savedStateOverTime === false) {
+      const sectionSummaryInClone = clone.querySelector("#summary-container");
+      if (sectionSummaryInClone) {
+        sectionSummaryInClone.classList.add("page-break-before");
+      }
+    }
+
+    // Hide pagination in the clone
+    const paginationInClone = clone.querySelector("#pagination-controls");
+    if (paginationInClone) paginationInClone.style.display = "none";
+
+    if (savedStateOverTime === false) {
+      console.log("Hiding overtime section in PDF");
+      const overtimeSection = clone.querySelector("#overtimeSection");
+      overtimeSection.style.display = "none";
+    } else {
+      const overTimeAuthorInClone = clone.querySelector("#overTimeAuthor");
+      if (overTimeAuthorInClone) {
+        overTimeAuthorInClone.classList.add("page-break-before");
+      }
+    }
+
+    // 🟢 Remove hidden elements
+    clone.querySelectorAll("*").forEach((el) => {
+      const style = window.getComputedStyle(el);
+      if (style.display === "none" || style.visibility === "hidden")
+        el.remove();
+    });
+
+    // 🟢 Remove empty elements to prevent blank pages
+    clone.querySelectorAll("div, section, tr").forEach((el) => {
       if (isVisiblyEmpty(el)) el.remove();
     });
 
-    const hidden = document.querySelectorAll(".hidden-section");
+    // 🟢 Extra: remove accidental blank page-break containers
+    clone.querySelectorAll(".page-break-before").forEach((el) => {
+      if (!el.textContent.trim() && el.children.length === 0) {
+        el.remove();
+      }
+    });
+    // Hide clone but keep measurable
+    // clone.style.position = "absolute";
+    // clone.style.top = "0";
+    // clone.style.left = "0";
+    // clone.style.width = "100%";
+    // clone.style.visibility = "hidden";
 
-    hidden.forEach((el) => el.parentNode.removeChild(el));
+    // Hidden wrapper
+    const wrapper = document.createElement("div");
+    wrapper.style.position = "fixed";
+    wrapper.style.top = "0";
+    wrapper.style.left = "0";
+    wrapper.style.width = "100%";
+    wrapper.style.background = "#fff";
+    wrapper.style.zIndex = "-1";
+    wrapper.style.visibility = "hidden";
 
-    await html2pdf().set(opt).from(clone).save();
-    console.log("PDF generated successfully");
+    // Force table/container to shrink to page width
+    clone.style.maxWidth = "100%";
+    clone.style.overflowX = "auto";
+
+    // clone.style.transform = "scale(0.9)"; // adjust scale factor if needed
+    // clone.style.transformOrigin = "top left";
+
+    wrapper.appendChild(clone);
+    document.body.appendChild(wrapper);
+
+    const opt = {
+      margin: 0.3,
+      filename: "report.pdf",
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: {
+        scale: 3, // higher scale improves clarity
+        logging: true,
+        useCORS: true,
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: clone.scrollWidth, // ensures wide table fits
+      },
+      jsPDF: { unit: "in", format: "a4", orientation: "portrait" },
+    };
+
+    try {
+      // 🟢 FINAL CLEANUP before rendering
+      const blankPages = clone.querySelectorAll(
+        "div, section,overtimeSection,capacityTableSection"
+      );
+      blankPages.forEach((el) => {
+        if (isVisiblyEmpty(el)) el.remove();
+      });
+
+      const hidden = document.querySelectorAll(".hidden-section");
+
+      hidden.forEach((el) => el.parentNode.removeChild(el));
+
+      await html2pdf().set(opt).from(clone).save();
+      console.log("PDF generated successfully");
+    } catch (err) {
+      console.error("Error in PDF generation:", err);
+    } finally {
+      document.body.removeChild(wrapper);
+    }
   } catch (err) {
     console.error("Error in PDF generation:", err);
-  } finally {
-    document.body.removeChild(wrapper);
   }
 }
 

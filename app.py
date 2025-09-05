@@ -1,18 +1,72 @@
 import socket
 import pandas as pd
+import json
 from io import BytesIO
-from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify,session
-from datetime import datetime
+from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify, session
+from datetime import datetime, timedelta
 
 app = Flask(__name__, static_folder='static')
 app.secret_key = 'supersecretkey'  # Required for session to work
 
-# --- Global variables to hold the application's state ---
-global_df = None
-global_authors = []
-global_base_url = ""
+# Reset temp directory when server starts
+from utils import reset_temp_directory
+reset_temp_directory()
+
+# @app.route('/reset', methods=['POST'])
+# def reset():
+#     """Reset the application state"""
+#     session.clear()  # Clear all session data
+#     reset_temp_directory()  # Reset temp directory
+#     return redirect(url_for('index'))
+
+@app.before_request
+def cleanup_check():
+    """Run cleanup periodically (every hour)"""
+    from utils import should_run_cleanup, cleanup_old_files, mark_cleanup_complete
+    
+    if should_run_cleanup():
+        cleanup_old_files()
+        mark_cleanup_complete()
+
+@app.route('/temp/<path:filename>')
+def serve_temp_file(filename):
+    """Serve files from temp directory"""
+    from utils import get_temp_dir
+    import os
+    
+    if not filename or '..' in filename:  # Basic security check
+        return 'Invalid filename', 400
+        
+    temp_dir = get_temp_dir()
+    return send_file(os.path.join(temp_dir, filename))
+
+class DataNotFoundError(Exception):
+    pass
+
+def get_session_data():
+    """Get data from session and temporary storage, raising DataNotFoundError if missing."""
+    from utils import load_dataframe
+    
+    file_id = session.get('file_id')
+    if not file_id:
+        raise DataNotFoundError("No data in session")
+    
+    df = load_dataframe(file_id)
+    if df is None:
+        raise DataNotFoundError("Data file not found")
+    
+    base_url = session.get('user_base_url', '')
+    holidays = session.get('holidays', [])
+    authors = session.get('user_authors', [])
+    
+    return {
+        'df': df,
+        'base_url': base_url,
+        'holidays': holidays,
+        'authors': authors
+    }
+
 original_filename = "timesheet.xlsx"
-global_holidays = set()  # <-- Add this line
 
 
 def get_local_ip():
@@ -863,11 +917,6 @@ def getStoryAndTaskCount(df):
         task_count = len(unique_task_ids)
 
 
-
-        story_count = len(unique_story_ids)
-        task_count = len(unique_task_ids)
-
-
     return story_count, task_count
 
 
@@ -878,9 +927,16 @@ def getAuthorSubtaskCount(df):
     """
     author_task_list = []
 
+    print(f"Debug - getAuthorSubtaskCount: DataFrame shape: {df.shape}")
+    if 'Author' in df.columns:
+        print(f"Debug - getAuthorSubtaskCount: Unique authors: {df['Author'].unique().tolist()}")
+    if 'Issue Type' in df.columns:
+        print(f"Debug - getAuthorSubtaskCount: Unique Issue Types: {df['Issue Type'].unique().tolist()}")
+
     if not df.empty and {'Author', 'Issue Key', 'Issue Type'}.issubset(df.columns):
-        # Filter only subtasks
-        subtask_df = df[df['Issue Type'] == 'Subtask']
+        # Filter only subtasks - check for different possible values
+        subtask_df = df[df['Issue Type'].str.contains('sub', case=False, na=False)]
+        print(f"Debug - getAuthorSubtaskCount: Subtask DataFrame shape: {subtask_df.shape}")
 
         # Group by author and count unique subtasks Worklog Id
         for author, group in subtask_df.groupby('Author'):
@@ -897,26 +953,50 @@ def getAuthorSubtaskCount(df):
 @app.route('/')
 def index():
     """Renders the initial upload page."""
-    return render_template('index.html', 
-                         processed=False,
-                         holidays=list(global_holidays) if global_holidays else [],
-                         weekly_overtime_data=None,
-                         category_totals=None,
-                         overtime_data={  # Add default overtime data
-                             'weekend_hours': 0,
-                             'daily_overtime': 0,
-                             'leave_overtime': 0,
-                             'holiday_overtime': 0,
-                             'total_overtime': 0
-                         })
+    from utils import remove_dataframe
+    
+    # Clean up temporary data
+    file_id = session.get('file_id')
+    if file_id:
+        remove_dataframe(file_id)  # This now also cleans up logo files
+    
+    # Clear all relevant session data
+    keys_to_clear = ['file_id', 'logo_filename', 'project_name', 'start_date', 'end_date', 
+                     'key_insights', 'user_base_url', 'holidays', 'user_authors']
+    for key in keys_to_clear:
+        session.pop(key, None)
+    session.clear()
+    return render_template('index.html', processed=False)
+
+@app.route('/api/session-check')
+def session_check():
+    """Check if all required session data is present"""
+    try:
+        data = get_session_data()
+        return jsonify({
+            "status": "valid",
+            "data": {
+                "holidays": session.get('holidays', []),
+                "weekly_overtime_data": None,
+                "category_totals": None,
+                "overtime_data": {
+                    'weekend_hours': 0,
+                    'daily_overtime': 0,
+                    'leave_overtime': 0,
+                    'holiday_overtime': 0,
+                    'total_overtime': 0
+                }
+            }
+        })
+    except DataNotFoundError:
+        return jsonify({"status": "invalid"}), 404
 
 @app.route('/process', methods=['POST'])
 def process_file_route():
     """
-    Handles the file upload, cleans author names, stores data globally,
+    Handles the file upload, cleans author names, stores data in temporary storage,
     and redirects to the report view.
     """
-    global global_df, global_authors, global_base_url, original_filename
     if 'file' not in request.files or not request.form.get('base_url'):
         return "Missing file or base URL", 400
 
@@ -933,14 +1013,25 @@ def process_file_route():
     except Exception as e:
         return f"Error reading file: {e}", 400
     
-    # **FIX:** Clean whitespace from author names to ensure accurate filtering.
+    # Clean whitespace from author names to ensure accurate filtering.
     if 'Author' in df.columns:
         df['Author'] = df['Author'].str.strip()
 
-    # Store data globally
-    global_df = df
-    global_authors = sorted(df['Author'].unique().tolist())
-    global_base_url = request.form['base_url']
+    # Debug: Check for duplicate authors
+    print(f"Debug - Raw authors from CSV: {df['Author'].unique().tolist()}")
+    unique_authors = sorted(df['Author'].unique().tolist())
+    print(f"Debug - Unique authors after sorting: {unique_authors}")
+    print(f"Debug - Author count: {len(unique_authors)}")
+
+    # Store DataFrame in temporary file
+    from utils import save_dataframe
+    file_id = save_dataframe(df)
+    
+    # Store only metadata in session
+    session['file_id'] = file_id
+    session['user_authors'] = unique_authors
+    session['user_base_url'] = request.form['base_url']
+    session['fileName'] = original_filename
     
     # Redirect to the report page
     return redirect(url_for('results'))
@@ -950,7 +1041,9 @@ def process_reverse_timesheet_route():
     """
     Handles reverse timesheet upload - converts timesheet template back to dashboard data.
     """
-    global global_df, global_authors, global_base_url, original_filename
+
+
+
     if 'file' not in request.files:
         return "Missing timesheet file", 400
 
@@ -982,9 +1075,11 @@ def process_reverse_timesheet_route():
         return f"Error processing timesheet: {e}", 400
     
     # Store data globally
-    global_df = df
-    global_authors = sorted(df['Author'].unique().tolist()) if 'Author' in df.columns else ['Unknown']
-    global_base_url = "https://imported-timesheet/"  # Default base URL for imported data
+
+    session['user_df'] = df.to_json() # Use a JSON string for storage
+    session['user_authors'] = sorted(df['Author'].unique().tolist()) if 'Author' in df.columns else ['Unknown']
+    session['user_base_url'] = "https://imported-timesheet/"
+    session['fileName'] = original_filename
     
     # Redirect to the report page
     return redirect(url_for('results'))
@@ -992,9 +1087,8 @@ def process_reverse_timesheet_route():
 @app.route('/upload_holidays', methods=['POST'])
 def upload_holidays():
     """
-    Accepts an Excel file with a single column of dates and updates the global_holidays set.
+    Accepts an Excel file with a single column of dates and updates the holidays in the session.
     """
-    global global_holidays
     file = request.files.get('file')
     if not file:
         return jsonify({'success': False, 'error': 'No file uploaded'}), 400
@@ -1024,16 +1118,23 @@ def upload_holidays():
         if len(valid_dates) == 0:
             return jsonify({'success': False, 'error': 'No valid dates found'}), 400
             
-        # Update global holidays
-        global_holidays.update(valid_dates.dt.strftime('%Y-%m-%d').tolist())
+        # Update holidays in session
+        current_holidays = set(session.get('holidays', []))
+        current_holidays.update(valid_dates.dt.strftime('%Y-%m-%d').tolist())
+        session['holidays'] = list(current_holidays)
         
         return jsonify({
             'success': True, 
-            'holidays': list(global_holidays),
+            'holidays': session['holidays'],
             'message': f'Imported {len(valid_dates)} dates successfully'
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route('/get_holidays', methods=['GET'])
+def get_holidays():
+    """Returns the current list of holidays from the session."""
+    return jsonify({'holidays': session.get('holidays', [])})
 
 def calculate_overtime_list(df, leave_days=0, working_hours=8, working_days=None, holidays=None):
     """Return list of authors with non-zero overtime."""
@@ -1084,23 +1185,17 @@ def calculate_overtime_list(df, leave_days=0, working_hours=8, working_days=None
 @app.route('/set_holidays', methods=['POST'])
 def set_holidays():
     """
-    Accepts a JSON list of dates (YYYY-MM-DD) from the calendar UI and updates the global_holidays set.
+    Accepts a JSON list of dates (YYYY-MM-DD) from the calendar UI and updates holidays in the session.
     """
-    global global_holidays
     try:
         data = request.get_json()
         holidays = data.get('holidays', [])
-        global_holidays = set(holidays)
-        return jsonify({'success': True, 'holidays': list(global_holidays)})
+        session['holidays'] = list(set(holidays))
+        return jsonify({'success': True, 'holidays': session['holidays']})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 400
 
-@app.route('/get_holidays', methods=['GET'])
-def get_holidays():
-    """
-    Returns the current list of holidays.
-    """
-    return jsonify({'holidays': list(global_holidays)})
+
 
 
 @app.route('/report_toolbar', methods=['Post'])
@@ -1118,12 +1213,24 @@ def reportToolbar():
     if logo_file and logo_file.filename != '':
         from werkzeug.utils import secure_filename
         import os
+        import uuid
+        from utils import get_temp_dir
 
-        filename = secure_filename(logo_file.filename)
-        upload_folder = 'static/uploads'
-        os.makedirs(upload_folder, exist_ok=True)
-        logo_file.save(os.path.join(upload_folder, filename))
-        session['logo_filename'] = filename  # persist across GETs
+        # Get file extension and session ID
+        _, ext = os.path.splitext(logo_file.filename)
+        file_id = session.get('file_id')
+        
+        if not file_id:
+            file_id = str(uuid.uuid4())
+            session['file_id'] = file_id
+            
+        # Create filename using session's file_id
+        temp_filename = f"logo_{file_id}{ext}"
+        # Save in temp directory
+        temp_dir = get_temp_dir()
+        logo_path = os.path.join(temp_dir, temp_filename)
+        logo_file.save(logo_path)
+        session['logo_filename'] = temp_filename  # Store temp filename in session
 
     # Date range
     start_date = request.form.get('start_date')
@@ -1144,186 +1251,191 @@ def reportToolbar():
 
 @app.route('/report', methods=['GET'])
 def results():
-    if global_df is None:
+    try:
+        # Get session data
+        data = get_session_data()
+        df = data['df']
+        base_url = data['base_url']
+        holidays = data.get('holidays', [])
+        authors = data['authors']
+
+        # Defaults
+        selected_category = request.args.get('category_type', 'Activity')
+        selected_summary_type = request.args.get('summary_type', 'Issue Summary')
+        working_hours = float(request.args.get('working_hours', 8))
+        working_days = request.args.getlist('working_days') or ['Monday','Tuesday','Wednesday','Thursday','Friday']
+        leave_days = float(request.args.get('leave_days', 0))
+        holiday_days = float(request.args.get('holiday_days', 0))
+        custom_column = request.args.get('custom_column', '')
+
+        # Get project name and logo from session
+        project_name = session.get('project_name')
+        logo_filename = session.get('logo_filename')
+        start_date = session.get('start_date')
+        end_date = session.get('end_date')
+        key_insights = session.get('key_insights')
+
+        # Default project name if not set
+        if not project_name and 'Project Name' in df.columns and not df['Project Name'].empty:
+            project_name = df['Project Name'].iloc[0]
+
+        # Handle custom column selection
+        if selected_category not in ['Activity', 'Label']:
+            custom_column = selected_category
+        elif selected_category == 'Custom' and custom_column:
+            selected_category = custom_column
+
+        # Get selected authors and store in session
+        selected_authors = request.args.getlist('author')
+        
+        # Debug: Log selected authors from request
+        print(f"Debug - Selected authors from request: {selected_authors}")
+        
+        # Clean up selected authors list to remove any duplicates and handle 'All' properly
+        if selected_authors:
+            if 'All' in selected_authors:
+                # If All is selected along with other authors, ignore other authors
+                selected_authors = ['All']
+            else:
+                # Remove duplicates while preserving order
+                selected_authors = list(dict.fromkeys(selected_authors))
+                if not selected_authors:
+                    # If list becomes empty after removing duplicates, default to All
+                    selected_authors = ['All']
+        else:
+            # Default to 'All' if no authors selected
+            selected_authors = ['All']
+            
+        print(f"Debug - Selected authors after processing: {selected_authors}")
+        session['selected_authors'] = selected_authors
+
+        # Store category and summary selections in session
+        session['selected_category'] = selected_category
+        session['selected_summary_type'] = selected_summary_type
+        
+        # Filter dataframe based on selected authors
+        if selected_authors != ['All']:
+            display_df = df[df['Author'].isin(selected_authors)].copy()
+        else:
+            display_df = df.copy()
+
+        # Store the list of displayed authors for UI
+        displayed_authors = sorted(display_df['Author'].unique().tolist())
+        session['displayed_authors'] = displayed_authors
+
+        # Calculate capacity and category hours once for all selected authors
+        capacity_list, category_hours_list = availableCapacity(
+            display_df.copy(), None, working_hours, working_days, holidays, selected_category
+        )
+        _, category_totals_df = process_timesheet(
+            display_df.copy(), base_url, selected_category, working_days, holidays
+        )
+        summary_df_for_ui = process_summary(display_df.copy(), selected_category, selected_summary_type)
+        overtime_data = calculate_overtime_hours(
+            display_df.copy(), leave_days, 0, working_hours, working_days, holidays
+        )
+        weekly_overtime_data = calculate_weekly_overtime(
+            display_df.copy(), working_hours, working_days, holidays
+        )
+
+        # Build per-author overtime table if "All" selected
+        overtime_list = []
+        if selected_authors == ['All'] or 'All' in selected_authors:
+            overtime_list = calculate_overtime_list(
+                display_df.copy(), leave_days, working_hours, working_days, holidays
+            )
+
+        category_total_sum = category_totals_df['Hours spent'].sum() if not category_totals_df.empty else 0
+        unique_story_count, unique_task_count = getStoryAndTaskCount(display_df.copy())
+        author_task_list = getAuthorSubtaskCount(display_df.copy())
+
+        start_date_str = format_date(start_date)
+        end_date_str = format_date(end_date)
+
+        # Debug: Log authors to check for duplicates
+        print(f"Debug - Authors list: {authors}")
+        print(f"Debug - Authors count: {len(authors)}")
+        print(f"Debug - Authors set: {set(authors)}")
+        print(f"Debug - Authors set count: {len(set(authors))}")
+
+        return render_template(
+            'index.html',
+            processed=True,
+            authors=authors,
+            selected_authors=selected_authors,
+            selected_category=selected_category,
+            selected_summary_type=selected_summary_type,
+            leave_days=leave_days,
+            holiday_days=holiday_days,
+            working_hours=working_hours,
+            working_days=working_days,
+            category_totals=category_totals_df.to_dict(orient='records'),
+            category_total_sum=category_total_sum,
+            summary_data=summary_df_for_ui.to_dict(orient='records'),
+            overtime_data=overtime_data,
+            weekly_overtime_data=weekly_overtime_data,
+            holidays=holidays,
+            unique_task_count=unique_task_count,
+            unique_story_count=unique_story_count,
+            capacity_list=capacity_list,
+            category_hours_list=category_hours_list,
+            project_name=project_name,
+            logo_filename=logo_filename,
+            start_date=start_date_str,
+            end_date=end_date_str,
+            key_insights=key_insights,
+            overtime_list=overtime_list,
+            author_task_data=author_task_list
+        )
+    except DataNotFoundError:
         return redirect(url_for('index'))
 
-    # Defaults
-    selected_author = request.args.get('author', 'All')
-    selected_category = request.args.get('category_type', 'Activity')
-    selected_summary_type = request.args.get('summary_type', 'Issue Summary')
-    working_hours = float(request.args.get('working_hours', 8))
-    working_days = request.args.getlist('working_days') or ['Monday','Tuesday','Wednesday','Thursday','Friday']
-    leave_days = float(request.args.get('leave_days', 0))
-    holiday_days = float(request.args.get('holiday_days', 0))
-    holidays = list(global_holidays)
-    custom_column = request.args.get('custom_column', '')
 
-    # Get project name and logo from session
-    project_name = session.get('project_name')
-    logo_filename = session.get('logo_filename')
-    start_date = session.get('start_date')
-    end_date = session.get('end_date')
-    key_insights = session.get('key_insights')
-
-
-
-
-    # Default project name if not set
-    if not project_name and 'Project Name' in global_df.columns and not global_df['Project Name'].empty:
-        project_name = global_df['Project Name'].iloc[0]
-
-    # Handle custom column selection
-    if selected_category not in ['Activity','Label']:
-        custom_column = selected_category
-    elif selected_category == 'Custom' and custom_column:
-        selected_category = custom_column
-
-    # Filter dataframe
-    display_df = global_df if selected_author=='All' else global_df[global_df['Author']==selected_author].copy()
-
-
-    
-#     # Calculate burnout detection using EMA Workload Strain Score
-    # burnout_data = detect_burnout(display_df.copy(), working_hours, working_days, holidays, burnout_threshold=10)
-
-    # Calculate all tables / charts
-    capacity_list, category_hours_list = availableCapacity(display_df.copy(), selected_author, working_hours, working_days, holidays, selected_category)
-    _, category_totals_df = process_timesheet(display_df.copy(), global_base_url, selected_category, working_days, holidays)
-    summary_df_for_ui = process_summary(display_df.copy(), selected_category, selected_summary_type)
-    overtime_data = calculate_overtime_hours(display_df.copy(), leave_days, 0, working_hours, working_days, holidays)
-    weekly_overtime_data = calculate_weekly_overtime(display_df.copy(), working_hours, working_days, holidays)
    
-       # NEW: build per-author overtime table if "All" selected
-    overtime_list = []
-    if selected_author == "All":
-        overtime_list = calculate_overtime_list(display_df.copy(), leave_days, working_hours, working_days, holidays)
+    #    # NEW: build per-author overtime table if "All" selected
+    # overtime_list = []
+    # if selected_author == "All":
+    #     overtime_list = calculate_overtime_list(display_df.copy(), leave_days, working_hours, working_days, holidays)
 
-    category_total_sum = category_totals_df['Hours spent'].sum() if not category_totals_df.empty else 0
-    unique_story_count, unique_task_count = getStoryAndTaskCount(display_df.copy())
-    author_task_list = getAuthorSubtaskCount(display_df.copy())
+    # category_total_sum = category_totals_df['Hours spent'].sum() if not category_totals_df.empty else 0
+    # unique_story_count, unique_task_count = getStoryAndTaskCount(display_df.copy())
+    # author_task_list = getAuthorSubtaskCount(display_df.copy())
     
-    start_date_str = format_date(start_date)
-    end_date_str = format_date(end_date)
-    print("start_date:", start_date)
-    print("end_date:", end_date)
-    return render_template(
-        'index.html',
-        processed=True,
-        authors=global_authors,
-        selected_author=selected_author,
-        selected_category=selected_category,
-        selected_summary_type=selected_summary_type,
-        leave_days=leave_days,
-        holiday_days=holiday_days,
-        working_hours=working_hours,
-        working_days=working_days,
-        category_totals=category_totals_df.to_dict(orient='records'),
-        category_total_sum=category_total_sum,
-        summary_data=summary_df_for_ui.to_dict(orient='records'),
-        overtime_data=overtime_data,
-        weekly_overtime_data=weekly_overtime_data,
-        holidays=holidays,
-        unique_task_count=unique_task_count,
-        unique_story_count=unique_story_count,
-        capacity_list=capacity_list,
-        category_hours_list=category_hours_list,
-        project_name=project_name,
-        logo_filename=logo_filename,
-        start_date= start_date_str,
-        end_date= end_date_str,
-        key_insights = key_insights,
-        overtime_list=overtime_list,  
-        author_task_data=author_task_list,
-        # burnout_data=burnout_data,
+    # start_date_str = format_date(start_date)
+    # end_date_str = format_date(end_date)
+    # print("start_date:", start_date)
+    # print("end_date:", end_date)
+    # return render_template(
+    #     'index.html',
+    #     processed=True,
+    #     authors=session.get('user_authors', []),
+    #     selected_author=selected_author,
+    #     selected_category=selected_category,
+    #     selected_summary_type=selected_summary_type,
+    #     leave_days=leave_days,
+    #     holiday_days=holiday_days,
+    #     working_hours=working_hours,
+    #     working_days=working_days,
+    #     category_totals=category_totals_df.to_dict(orient='records'),
+    #     category_total_sum=category_total_sum,
+    #     summary_data=summary_df_for_ui.to_dict(orient='records'),
+    #     overtime_data=overtime_data,
+    #     weekly_overtime_data=weekly_overtime_data,
+    #     holidays=holidays,
+    #     unique_task_count=unique_task_count,
+    #     unique_story_count=unique_story_count,
+    #     capacity_list=capacity_list,
+    #     category_hours_list=category_hours_list,
+    #     project_name=project_name,
+    #     logo_filename=logo_filename,
+    #     start_date= start_date_str,
+    #     end_date= end_date_str,
+    #     key_insights = key_insights,
+    #     overtime_list=overtime_list,  
+    #     author_task_data=author_task_list,
+    #     # burnout_data=burnout_data,
 
-    )
-
-
-# @app.route('/report', methods=['GET', 'POST'])
-# def results():
-#     """
-#     Displays the report page. It filters the global data based on the
-#     'author' query parameter and generates the UI tables.
-#     """
-   
-#     if global_df is None:
-#         return redirect(url_for('index'))
-
-#     selected_author = request.args.get('author', 'All')
-#     selected_category = request.args.get('category_type', 'Activity')  # default Activity
-#     selected_summary_type = request.args.get('summary_type', 'Issue Summary')  # default Issue Summary
-#     custom_column = request.args.get('custom_column', '')
-#     leave_days = float(request.args.get('leave_days', 0))
-#     holiday_days = float(request.args.get('holiday_days', 0))
-#     working_hours = float(request.args.get('working_hours', 8))
-#     working_days = request.args.getlist('working_days') or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-#     holidays = list(global_holidays)
-
-#     # Handle custom column selection - check if it's a custom column name directly
-#     if selected_category not in ['Activity', 'Label'] and selected_category != 'Activity':
-#         # This means selected_category contains the custom column name
-#         custom_column = selected_category
-#     elif selected_category == 'Custom' and custom_column:
-#         selected_category = custom_column
-    
-#     # Debug logging
-#     print(f"Debug - selected_category: {selected_category}, custom_column: {custom_column}, summary_type: {selected_summary_type}")
-
-#     # Filter the main DataFrame based on selection
-#     if selected_author == 'All':
-#         display_df = global_df
-#     else:
-#         display_df = global_df[global_df['Author'] == selected_author].copy()
-
-
-
-#     # Calculate working days, holidays, and leave days
-#     capacity_list, category_hours_list =availableCapacity(display_df.copy(), selected_author, working_hours, working_days, holidays, selected_category )
-#     # Generate data for the UI tables with category type and summary type
-#     _, category_totals_df = process_timesheet(display_df.copy(), global_base_url, selected_category, working_days, holidays)
-#     summary_df_for_ui = process_summary(display_df.copy(), selected_category, selected_summary_type)
-    
-#     # Calculate overtime hours
-#     overtime_data = calculate_overtime_hours(display_df.copy(), leave_days, 0, working_hours, working_days, holidays)
-    
-#     # Calculate weekly overtime data for chart
-#     weekly_overtime_data = calculate_weekly_overtime(display_df.copy(), working_hours, working_days, holidays)
-    
-#     # Calculate burnout detection using EMA Workload Strain Score
-#     burnout_data = detect_burnout(display_df.copy(), working_hours, working_days, holidays, burnout_threshold=10)
-    
-#     # Calculate category total sum
-#     category_total_sum = category_totals_df['Hours spent'].sum() if not category_totals_df.empty else 0
-
-#     unique_story_count, unique_task_count = getStoryAndTaskCount(display_df.copy())
-
-#     project_name = display_df['Project Name'].iloc[0] if 'Project Name' in display_df.columns and not display_df['Project Name'].empty else 'Unknown Project'
-
-#     return render_template(
-#         'index.html',
-#         processed=True,
-#         authors=global_authors,
-#         selected_author=selected_author,
-#         selected_category=selected_category,
-#         selected_summary_type=selected_summary_type,
-#         leave_days=leave_days,
-#         holiday_days=holiday_days,
-#         working_hours=working_hours,
-#         working_days=working_days,
-#         category_totals=category_totals_df.to_dict(orient='records'),
-#         category_total_sum=category_total_sum,
-#         summary_data=summary_df_for_ui.to_dict(orient='records'),
-#         overtime_data=overtime_data,
-#         weekly_overtime_data=weekly_overtime_data,
-#         burnout_data=burnout_data,
-#         holidays=holidays,
-#         unique_task_count=unique_task_count,
-#         unique_story_count=unique_story_count,
-#         capacity_list=capacity_list,
-#         category_hours_list = category_hours_list,
-#         project_name = project_name, 
-
-#     )
+    # )
 
 @app.route('/download_bulk/<report_type>')
 def download_bulk_reports(report_type):
@@ -1331,24 +1443,81 @@ def download_bulk_reports(report_type):
     Downloads individual Excel files for each author as a ZIP archive
     Creates separate Excel files for each author
     """
-    if global_df is None:
+    try:
+        # Get session data
+        data = get_session_data()
+        df = data['df']
+        base_url = data['base_url']
+        holidays = data.get('holidays', [])
+        
+        # Get selected authors from URL params or session
+        selected_authors = request.args.getlist('author') or session.get('selected_authors', ['All'])
+        
+        # If specific authors are selected, filter the dataframe
+        if selected_authors and 'All' not in selected_authors:
+            df = df[df['Author'].isin(selected_authors)].copy()
+        
+        selected_category = request.args.get('category_type', 'Activity')
+        leave_days = float(request.args.get('leave_days', 0))
+        holiday_days = float(request.args.get('holiday_days', 0))
+        working_hours = float(request.args.get('working_hours', 8))
+        working_days_param = request.args.get('working_days', '')
+        working_days = working_days_param.split(',') if working_days_param else ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+        
+        # Create a ZIP file containing individual Excel files
+        import zipfile
+        import tempfile
+        import os
+        
+        # Create a temporary directory
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zip_buffer = BytesIO()
+            
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for author in df['Author'].unique():
+                    # Filter data for this author
+                    author_df = df[df['Author'] == author].copy()
+                    
+                    if report_type == 'detailed':
+                        output_df, _ = process_timesheet(
+                            author_df, base_url, selected_category,
+                            working_days, holidays
+                        )
+                        
+                        # Create individual Excel file for this author
+                        excel_buffer = BytesIO()
+                        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                            output_df.to_excel(writer, index=False, sheet_name='Timesheet')
+                        
+                        # Clean author name for filename
+                        clean_author_name = str(author).replace('/', '_').replace('\\', '_').replace('[', '').replace(']', '').replace('*', '').replace('?', '').replace(':', '').replace('<', '').replace('>', '').replace('|', '')
+                        filename = f"{clean_author_name}_timesheet.xlsx"
+                        
+                        # Add the Excel file to ZIP
+                        excel_buffer.seek(0)
+                        zip_file.writestr(filename, excel_buffer.getvalue())
+            
+            zip_buffer.seek(0)
+            download_name = f"individual_timesheets_{len(df['Author'].unique())}_authors.zip"
+            
+            return send_file(
+                zip_buffer,
+                as_attachment=True,
+                download_name=download_name,
+                mimetype='application/zip'
+            )
+    except DataNotFoundError:
         return redirect(url_for('index'))
     
-    selected_category = request.args.get('category_type', 'Activity')
-    leave_days = float(request.args.get('leave_days', 0))
-    holiday_days = float(request.args.get('holiday_days', 0))
-    working_hours = float(request.args.get('working_hours', 8))
-    working_days_param = request.args.get('working_days', '')
-    if working_days_param:
-        working_days = working_days_param.split(',')
-    else:
-        working_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-    
-    # Add holidays parameter
-    holidays = list(global_holidays)
-    
+    # Get session data
+    df_json = session.get('user_df')
+    if not df_json:
+        return redirect(url_for('index'))
+    df = pd.read_json(df_json)
+    base_url = session.get('user_base_url', '')
+
     # Get all unique authors
-    all_authors = global_df['Author'].unique()
+    all_authors = df['Author'].unique()
     
     # Create a ZIP file containing individual Excel files
     import zipfile
@@ -1362,10 +1531,10 @@ def download_bulk_reports(report_type):
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             for author in all_authors:
                 # Filter data for this author
-                author_df = global_df[global_df['Author'] == author].copy()
+                author_df = df[df['Author'] == author].copy()
                 
                 if report_type == 'detailed':
-                    output_df, _ = process_timesheet(author_df, global_base_url, selected_category, working_days, holidays)
+                    output_df, _ = process_timesheet(author_df, base_url, selected_category, working_days, holidays)
                     
                     # Create individual Excel file for this author
                     excel_buffer = BytesIO()
@@ -1396,68 +1565,128 @@ def download_report(report_type):
     Generates and serves a specific report file on demand.
     The data is filtered based on the 'author' query parameter.
     """
-    if global_df is None:
+    try:
+        # Get session data
+        data = get_session_data()
+        df = data['df']
+        base_url = data['base_url']
+        holidays = data.get('holidays', [])
+
+        # Get selected authors from URL params or session
+        selected_authors = request.args.getlist('author') or session.get('selected_authors', ['All'])
+        selected_category = request.args.get('category_type', session.get('selected_category', 'Activity'))
+        selected_summary_type = request.args.get('summary_type', session.get('selected_summary_type', 'Issue Summary'))
+        custom_column = request.args.get('custom_column', '')
+        leave_days = float(request.args.get('leave_days', 0))
+        holiday_days = float(request.args.get('holiday_days', 0))
+        working_hours = float(request.args.get('working_hours', 8))
+        
+        # Handle working_days parameter
+        working_days_param = request.args.get('working_days', '')
+        working_days = (
+            working_days_param.split(',')
+            if isinstance(working_days_param, str) and working_days_param
+            else ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+        )
+
+        # Handle custom column selection
+        if selected_category not in ['Activity', 'Label'] and selected_category != 'Activity':
+            custom_column = selected_category
+        elif selected_category == 'Custom' and custom_column:
+            selected_category = custom_column
+
+        # Filter dataframe based on selected authors
+        if selected_authors and 'All' not in selected_authors:
+            display_df = df[df['Author'].isin(selected_authors)].copy()
+            author_label = ", ".join(selected_authors)
+        else:
+            display_df = df.copy()
+            author_label = "All"
+
+        # Generate the requested file
+        if report_type == 'detailed':
+            output_df, _ = process_timesheet(
+                display_df.copy(), base_url, selected_category,
+                working_days, holidays
+            )
+            file_io = BytesIO()
+            output_df.to_excel(file_io, index=False, sheet_name='Detailed Timesheet')
+            file_io.seek(0)
+            download_name = session.get('fileName', 'timesheet.xlsx').rsplit('.', 1)[0] + "_detailed.xlsx"
+        
+        elif report_type == 'summary':
+            summary_df = process_summary(display_df.copy(), selected_category, selected_summary_type)
+            file_io = BytesIO()
+            summary_df.to_excel(file_io, index=False, sheet_name='Summary Report')
+            file_io.seek(0)
+            download_name = "jira_summary.xlsx"
+        
+        elif report_type == 'sprint_closure':
+            file_io = process_sprint_closure_report(display_df.copy(), selected_summary_type)
+            download_name = "sprint_closure_report.xlsx"
+        
+        else:
+            return "Invalid report type", 404
+
+        return send_file(
+            file_io,
+            as_attachment=True,
+            download_name=download_name,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    except DataNotFoundError:
         return redirect(url_for('index'))
-
-    selected_author = request.args.get('author', 'All')
-    selected_category = request.args.get('category_type', 'Activity')  # default Activity
-    selected_summary_type = request.args.get('summary_type', 'Issue Summary')  # default Issue Summary
-    custom_column = request.args.get('custom_column', '')
-    leave_days = float(request.args.get('leave_days', 0))
-    holiday_days = float(request.args.get('holiday_days', 0))
-    working_hours = float(request.args.get('working_hours', 8))
-    # Handle working_days parameter - can be comma-separated string or list
-    working_days_param = request.args.get('working_days', '')
-    if working_days_param:
-        working_days = working_days_param.split(',') if isinstance(working_days_param, str) else working_days_param
-    else:
-        working_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-
-    # Add this line to ensure holidays is defined
-    holidays = list(global_holidays)
     
-    # Handle custom column selection - check if it's a custom column name directly
-    if selected_category not in ['Activity', 'Label'] and selected_category != 'Activity':
-        # This means selected_category contains the custom column name
-        custom_column = selected_category
-    elif selected_category == 'Custom' and custom_column:
-        selected_category = custom_column
+    # # Handle custom column selection - check if it's a custom column name directly
+    # if selected_category not in ['Activity', 'Label'] and selected_category != 'Activity':
+    #     # This means selected_category contains the custom column name
+    #     custom_column = selected_category
+    # elif selected_category == 'Custom' and custom_column:
+    #     selected_category = custom_column
     
-    # Debug logging
-    print(f"Debug Download - selected_category: {selected_category}, custom_column: {custom_column}, summary_type: {selected_summary_type}")
-    print(selected_author)
+    # # Debug logging
+    # print(f"Debug Download - selected_category: {selected_category}, custom_column: {custom_column}, summary_type: {selected_summary_type}")
+    # print(selected_author)
 
-    # Filter the main DataFrame based on selection
-    if selected_author == 'All':
-        display_df = global_df
-    else:
-        display_df = global_df[global_df['Author'] == selected_author].copy()
+    # # Filter the main DataFrame based on selection
+    # # Get session data
+    # df_json = session.get('user_df')
+    # if not df_json:
+    #     return redirect(url_for('index'))
+    # df = pd.read_json(df_json)
+    # base_url = session.get('user_base_url', '')
 
-    # Generate the requested file with category type
-    if report_type == 'detailed':
-        output_df, _ = process_timesheet(display_df, global_base_url, selected_category, working_days, holidays)
-        file_io = BytesIO()
-        output_df.to_excel(file_io, index=False, sheet_name='Detailed Timesheet')
-        file_io.seek(0)
-        download_name = original_filename.rsplit('.', 1)[0] + "_detailed.xlsx"
-    elif report_type == 'summary':
-        summary_df = process_summary(display_df, selected_category, selected_summary_type)
-        file_io = BytesIO()
-        summary_df.to_excel(file_io, index=False, sheet_name='Summary Report')
-        file_io.seek(0)
-        download_name = "jira_summary.xlsx"
-    elif report_type == 'sprint_closure':
-        file_io = process_sprint_closure_report(display_df, selected_summary_type)
-        download_name = "sprint_closure_report.xlsx"
-    else:
-        return "Invalid report type", 404
+    # if selected_author == 'All':
+    #     display_df = df
+    # else:
+    #     display_df = df[df['Author'] == selected_author].copy()
 
-    return send_file(
-        file_io,
-        as_attachment=True,
-        download_name=download_name,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    # # Generate the requested file with category type
+    # if report_type == 'detailed':
+    #     output_df, _ = process_timesheet(display_df, base_url, selected_category, working_days, holidays)
+    #     file_io = BytesIO()
+    #     output_df.to_excel(file_io, index=False, sheet_name='Detailed Timesheet')
+    #     file_io.seek(0)
+    #     download_name = original_filename.rsplit('.', 1)[0] + "_detailed.xlsx"
+    # elif report_type == 'summary':
+    #     summary_df = process_summary(display_df, selected_category, selected_summary_type)
+    #     file_io = BytesIO()
+    #     summary_df.to_excel(file_io, index=False, sheet_name='Summary Report')
+    #     file_io.seek(0)
+    #     download_name = "jira_summary.xlsx"
+    # elif report_type == 'sprint_closure':
+    #     file_io = process_sprint_closure_report(display_df, selected_summary_type)
+    #     download_name = "sprint_closure_report.xlsx"
+    # else:
+    #     return "Invalid report type", 404
+
+    # return send_file(
+    #     file_io,
+    #     as_attachment=True,
+    #     download_name=download_name,
+    #     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    # )
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=5005)
