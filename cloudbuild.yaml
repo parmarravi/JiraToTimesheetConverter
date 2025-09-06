@@ -1,0 +1,5 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "-t", "gcr.io/$PROJECT_ID/jira-worklog-tool", "."]
+images:
+  - "gcr.io/$PROJECT_ID/jira-worklog-tool"
