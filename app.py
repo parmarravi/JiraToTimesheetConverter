@@ -634,10 +634,40 @@ def calculate_overtime_hours(df, leave_days=0, holiday_days=0, working_hours=8, 
     total_overtime['total_overtime'] = round(sum(total_overtime.values()), 2)
     return total_overtime
 
-def process_summary(df, category_type="Activity", summary_type="Issue Summary"):
+def process_summary(df, category_type="Activity", summary_type="Issue Summary", sort_by="Author", is_reverse_timesheet=False):
     """Generates a summary of time spent per task."""
     if df.empty:
         return pd.DataFrame()
+    
+    if is_reverse_timesheet:
+        # For reverse timesheet, ALWAYS group by Issue Key regardless of sort option
+        summary_df = df.groupby(['Issue Key'], as_index=False).agg({
+            'Time Spent (seconds)': 'sum',
+            'Author': 'first',  # Take first author for the ticket
+            'Issue Status': 'first',  # Take first status
+            'Issue Summary': 'first'  # Take first summary
+        })
+        summary_df['Total Efforts (hrs)'] = round(summary_df['Time Spent (seconds)'] / 3600, 2)
+        
+        # Use Activity if available, otherwise use 'General'
+        if 'Activity' in df.columns:
+            summary_df['Category'] = df.groupby(['Issue Key'])['Activity'].first().values
+        else:
+            summary_df['Category'] = 'General'
+        
+        summary_df['Summary'] = summary_df['Issue Summary']
+        
+        # Apply sorting based on sort_by parameter
+        if sort_by == "Total Efforts":
+            summary_df = summary_df.sort_values(['Total Efforts (hrs)', 'Issue Key'], ascending=[False, True])
+        elif sort_by == "Author":
+            summary_df = summary_df.sort_values(['Author', 'Issue Key'], ascending=[True, True])
+        else:  # Default or "Ticket/Task #"
+            summary_df = summary_df.sort_values(['Issue Key'], ascending=[True])
+        
+        return summary_df[['Category', 'Summary', 'Author', 'Issue Status', 'Issue Key', 'Total Efforts (hrs)']]
+    
+    # Original logic for regular Jira exports
     # ✅ Group by Activity or Labels based on category_type selection with fallback
     if category_type == "Activity" and 'Activity' in df.columns:
         group_col = 'Activity'
@@ -662,12 +692,24 @@ def process_summary(df, category_type="Activity", summary_type="Issue Summary"):
     else:
         summary_col = 'Issue Summary'  # Use as is even if column doesn't exist
     
+    # Group by and include Issue Key for sorting purposes
     summary_df = df.groupby(
         [group_col, summary_col, 'Author', 'Issue Status'],
         as_index=False
     )['Time Spent (seconds)'].sum()
     summary_df['Total Efforts (hrs)'] = round(summary_df['Time Spent (seconds)'] / 3600, 2)
     summary_df.rename(columns={group_col: 'Category', summary_col: 'Summary'}, inplace=True)
+    
+    # Sort the summary data based on the sort_by parameter
+    if sort_by == "Total Efforts":
+        # Sort by Total Efforts (hrs) in descending order, then by Author
+        summary_df = summary_df.sort_values(['Total Efforts (hrs)', 'Author'], ascending=[False, True])
+    elif sort_by == "Ticket/Task #":
+        # Sort by Issue Key (Ticket/Task #)
+        summary_df = summary_df.sort_values(['Issue Key', 'Author'], ascending=[True, True])
+    else:
+        # Default sort by Author (ascending), then by Total Efforts (hrs) descending
+        summary_df = summary_df.sort_values(['Author', 'Total Efforts (hrs)'], ascending=[True, False])
     
     return summary_df[['Category', 'Summary', 'Author', 'Issue Status', 'Total Efforts (hrs)']]
 
@@ -683,7 +725,14 @@ def process_reverse_timesheet(df):
     reverse_df = pd.DataFrame()
     
     # Required mappings for dashboard visualization
-    reverse_df['Author'] = df.get('Author', 'Unknown')  # If Author column exists, use it
+    # Handle Author column with proper fallback for missing or empty values
+    if 'Author' in df.columns:
+        reverse_df['Author'] = df['Author'].fillna('Unknown').replace('', 'Unknown').astype(str)
+        # Replace any remaining empty strings or whitespace-only strings
+        reverse_df['Author'] = reverse_df['Author'].apply(lambda x: 'Unknown' if not x or x.strip() == '' else x.strip())
+    else:
+        reverse_df['Author'] = 'Unknown'
+    
     reverse_df['Start Date'] = pd.to_datetime(df['Date'], format='%d/%b/%Y', errors='coerce')
     reverse_df['Time Spent (seconds)'] = df['Hours spent'] * 3600  # Convert hours back to seconds
     reverse_df['Project Name'] = df.get('Application/Project Name', 'Unknown Project')
@@ -1074,10 +1123,28 @@ def process_reverse_timesheet_route():
     except Exception as e:
         return f"Error processing timesheet: {e}", 400
     
-    # Store data globally
+    # Clean whitespace from author names and ensure no empty values
+    if 'Author' in df.columns:
+        df['Author'] = df['Author'].astype(str).str.strip()
+        # Replace any empty strings with 'Unknown'
+        df['Author'] = df['Author'].replace('', 'Unknown').replace('nan', 'Unknown')
+        # Handle any remaining NaN values
+        df['Author'] = df['Author'].fillna('Unknown')
 
-    session['user_df'] = df.to_json() # Use a JSON string for storage
-    session['user_authors'] = sorted(df['Author'].unique().tolist()) if 'Author' in df.columns else ['Unknown']
+    # Get unique authors list - ensure 'Unknown' is included if present
+    unique_authors = sorted(df['Author'].unique().tolist()) if 'Author' in df.columns else ['Unknown']
+    
+    # Ensure we have at least one author
+    if not unique_authors or len(unique_authors) == 0:
+        unique_authors = ['Unknown']
+
+    # Store DataFrame in temporary file (same as regular Jira upload)
+    from utils import save_dataframe
+    file_id = save_dataframe(df)
+    
+    # Store only metadata in session (same pattern as process_file_route)
+    session['file_id'] = file_id
+    session['user_authors'] = unique_authors
     session['user_base_url'] = "https://imported-timesheet/"
     session['fileName'] = original_filename
     
@@ -1262,6 +1329,7 @@ def results():
         # Defaults
         selected_category = request.args.get('category_type', 'Activity')
         selected_summary_type = request.args.get('summary_type', 'Issue Summary')
+        summary_sort_by = request.args.get('summary_sort_by', 'Author')  # New sort parameter
         working_hours = float(request.args.get('working_hours', 8))
         working_days = request.args.getlist('working_days') or ['Monday','Tuesday','Wednesday','Thursday','Friday']
         leave_days = float(request.args.get('leave_days', 0))
@@ -1313,6 +1381,10 @@ def results():
         session['selected_category'] = selected_category
         session['selected_summary_type'] = selected_summary_type
         
+
+        # Check if this is imported timesheet data
+        is_reverse_timesheet = base_url == "https://imported-timesheet/"
+        
         # Filter dataframe based on selected authors
         if selected_authors != ['All']:
             display_df = df[df['Author'].isin(selected_authors)].copy()
@@ -1330,7 +1402,7 @@ def results():
         _, category_totals_df = process_timesheet(
             display_df.copy(), base_url, selected_category, working_days, holidays
         )
-        summary_df_for_ui = process_summary(display_df.copy(), selected_category, selected_summary_type)
+        summary_df_for_ui = process_summary(display_df.copy(), selected_category, selected_summary_type, summary_sort_by,is_reverse_timesheet)
         overtime_data = calculate_overtime_hours(
             display_df.copy(), leave_days, 0, working_hours, working_days, holidays
         )
@@ -1358,6 +1430,8 @@ def results():
         print(f"Debug - Authors set: {set(authors)}")
         print(f"Debug - Authors set count: {len(set(authors))}")
 
+
+        print(f'Debug - Rendering Reverse Timesheet: {is_reverse_timesheet}. base_url: {base_url}')
         return render_template(
             'index.html',
             processed=True,
@@ -1365,6 +1439,8 @@ def results():
             selected_authors=selected_authors,
             selected_category=selected_category,
             selected_summary_type=selected_summary_type,
+            summary_sort_by=summary_sort_by,  # Add sort parameter to template
+            is_reverse_timesheet=is_reverse_timesheet,  # Add flag for template
             leave_days=leave_days,
             holiday_days=holiday_days,
             working_hours=working_hours,
@@ -1615,7 +1691,8 @@ def download_report(report_type):
             download_name = session.get('fileName', 'timesheet.xlsx').rsplit('.', 1)[0] + "_detailed.xlsx"
         
         elif report_type == 'summary':
-            summary_df = process_summary(display_df.copy(), selected_category, selected_summary_type)
+            summary_sort_by = request.args.get('summary_sort_by', 'Author')
+            summary_df = process_summary(display_df.copy(), selected_category, selected_summary_type, summary_sort_by)
             file_io = BytesIO()
             summary_df.to_excel(file_io, index=False, sheet_name='Summary Report')
             file_io.seek(0)

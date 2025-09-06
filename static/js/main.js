@@ -430,9 +430,19 @@ document.addEventListener("DOMContentLoaded", async function () {
     // Wait for a small delay to ensure DOM is ready
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // Initialize charts
-    await initializeCharts();
-    paginationSummaryTable();
+    // Initialize charts (only if chart elements exist)
+    try {
+      await initializeCharts();
+    } catch (error) {
+      console.log("Charts not available or failed to initialize:", error);
+    }
+
+    // Initialize pagination (only if summary table exists)
+    try {
+      paginationSummaryTable();
+    } catch (error) {
+      console.log("Pagination not available or failed to initialize:", error);
+    }
 
     // Set date range display
     const displayDiv = document.getElementById("date-display");
@@ -731,6 +741,16 @@ function setupEventListeners() {
     });
   }
 
+  // Summary sort dropdown change
+  const summarySortDropdown = document.getElementById("summarySortDropdown");
+  if (summarySortDropdown) {
+    summarySortDropdown.addEventListener("change", function () {
+      const currentUrl = new URL(window.location);
+      currentUrl.searchParams.set("summary_sort_by", this.value);
+      window.location.href = currentUrl.toString();
+    });
+  }
+
   // const reportDownload = document.getElementById("reportButton");
   // if (reportDownload) {
   //   reportDownload.addEventListener("click", function () {
@@ -744,7 +764,7 @@ async function toggleAuthorSubtaskUI() {
   const section = document.getElementById("author-task-container");
   const toggle = document.getElementById("showAuthorSubtaskUI");
   console.log("Toggling Author Subtask UI", section);
-  if (section) {
+  if (section && toggle) {
     section.style.display = toggle.checked ? "block" : "none";
     // Save all form states to localStorage
     saveAllFormStates();
@@ -755,10 +775,12 @@ async function toggleCapacityUI() {
   console.log("Toggling Capacity UI");
   const section = document.getElementById("capacityTableSection");
   const toggle = document.getElementById("showCapacityUI");
-  section.style.display = toggle.checked ? "block" : "none";
 
-  // Save all form states to localStorage
-  saveAllFormStates();
+  if (section && toggle) {
+    section.style.display = toggle.checked ? "block" : "none";
+    // Save all form states to localStorage
+    saveAllFormStates();
+  }
 }
 
 // Overtime UI toggle
@@ -773,14 +795,14 @@ async function toggleOvertimeUI() {
   // Save all form states to localStorage
   saveAllFormStates();
 
-  if (checkbox.checked) {
-    settingsToggle.style.display = "block";
+  if (checkbox && checkbox.checked) {
+    if (settingsToggle) settingsToggle.style.display = "block";
     if (overtimeChart) overtimeChart.style.display = "block";
     if (overtimeBreakdown) overtimeBreakdown.style.display = "block";
     if (burnoutAlert) burnoutAlert.style.display = "block";
     if (overTimeAuthor) overTimeAuthor.style.display = "block";
-  } else {
-    settingsToggle.style.display = "none";
+  } else if (checkbox) {
+    if (settingsToggle) settingsToggle.style.display = "none";
     if (overtimeChart) overtimeChart.style.display = "none";
     if (overtimeBreakdown) overtimeBreakdown.style.display = "none";
     if (burnoutAlert) burnoutAlert.style.display = "none";
@@ -1347,11 +1369,24 @@ function initializeStrainScoreChart() {
 }
 
 function paginationSummaryTable() {
+  // Check if summary table exists first
+  const summaryTable = document.getElementById("summary-table");
+  if (!summaryTable) {
+    console.log("Summary table not found, skipping pagination setup");
+    return;
+  }
+
   // Get required elements
   const rows = document.querySelectorAll("#summary-table tbody tr");
   const rowsPerPage = 10;
   const totalRows = rows.length;
   const totalPages = Math.ceil(totalRows / rowsPerPage);
+
+  // If no rows, skip pagination
+  if (totalRows === 0) {
+    console.log("No rows found in summary table, skipping pagination");
+    return;
+  }
 
   // Ensure required elements exist
   let info = document.getElementById("summary-info");
@@ -1362,7 +1397,7 @@ function paginationSummaryTable() {
     info = document.createElement("div");
     info.id = "summary-info";
     const table = document.getElementById("summary-table");
-    if (table) {
+    if (table && table.parentElement) {
       table.parentElement.insertBefore(info, table.nextSibling);
     }
   }
@@ -1370,7 +1405,7 @@ function paginationSummaryTable() {
   if (!controls) {
     controls = document.createElement("div");
     controls.id = "pagination-controls";
-    if (info) {
+    if (info && info.parentElement) {
       info.parentElement.insertBefore(controls, info.nextSibling);
     }
   }
@@ -1555,6 +1590,9 @@ async function downloadSectionPDF() {
     // Hide pagination in the clone
     const paginationInClone = clone.querySelector("#pagination-controls");
     if (paginationInClone) paginationInClone.style.display = "none";
+
+    const summarySortContainer = clone.querySelector("#summarySortContainer");
+    if (summarySortContainer) summarySortContainer.style.display = "none";
 
     if (savedStateOverTime === false) {
       console.log("Hiding overtime section in PDF");

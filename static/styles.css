@@ -639,3 +639,16 @@ tbody tr:nth-child(odd) {
 .checkbox-group input[type="checkbox"] {
   margin: 0;
 }
+
+/* Summary Sort Dropdown Styles */
+#summarySortDropdown {
+  font-size: 14px;
+  min-width: 150px;
+  cursor: pointer;
+}
+
+#summarySortDropdown:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}

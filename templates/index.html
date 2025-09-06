@@ -335,11 +335,11 @@
                         {% set author_query = 'author=All' %}
                     {% endif %}
 
-                    <a href="{{ url_for('download_report', report_type='detailed', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}&{{ author_query }}" class="button-link">Download Detailed Timesheet</a>
+                    <a href="{{ url_for('download_report', report_type='detailed', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', summary_sort_by=summary_sort_by or 'Author', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}&{{ author_query }}" class="button-link">Download Detailed Timesheet</a>
                     
-                    <a href="{{ url_for('download_report', report_type='summary', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}&{{ author_query }}" class="button-link">Download Summary Report</a>
+                    <a href="{{ url_for('download_report', report_type='summary', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', summary_sort_by=summary_sort_by or 'Author', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}&{{ author_query }}" class="button-link">Download Summary Report</a>
                     
-                    <a href="{{ url_for('download_report', report_type='sprint_closure', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}&{{ author_query }}" class="button-link">Download Sprint Closure Report</a>
+                    <a href="{{ url_for('download_report', report_type='sprint_closure', category_type=selected_category or 'Activity', summary_type=selected_summary_type or 'Issue Summary', summary_sort_by=summary_sort_by or 'Author', leave_days=leave_days or 0, holiday_days=holiday_days or 0, working_hours=working_hours or 8, working_days=(working_days or ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])|join(',')) }}&{{ author_query }}" class="button-link">Download Sprint Closure Report</a>
                     
                     <button type="button" class="button-reportButton" id="reportButton">Download Report</button>
                 </div>
@@ -657,8 +657,21 @@
    
         <!-- Summary Table -->
         <div id="summary-container" class="summary-container">
-        <h3>Summary Efforts</h3>
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
+            <h3 style="margin: 0;">Summary Efforts</h3>
+            <div id="summarySortContainer" style="display: flex; align-items: center; gap: 10px;">
+                <label style="font-weight: bold; margin: 0;">Sort by:</label>
+                <select id="summarySortDropdown" style="padding: 5px 10px; border: 1px solid #ced4da; border-radius: 4px; background: white;">
+                    <option value="Author" {% if summary_sort_by == 'Author' or not summary_sort_by %}selected{% endif %}>Author (Default)</option>
+                    <option value="Total Efforts" {% if summary_sort_by == 'Total Efforts' %}selected{% endif %}>Total Efforts</option>
+                    {% if is_reverse_timesheet %}
+                    <option value="Ticket/Task #" {% if summary_sort_by == 'Ticket/Task #' %}selected{% endif %}>Ticket/Task #</option>
+                    {% endif %}
+                </select>
+            </div>
+        </div>
         <div id="summary-info"></div>
+        
         <table id="summary-table"  class="styled-table">
             <thead>
                 <tr>
@@ -697,5 +710,6 @@
        
     {% endif %}
 </div>
+
 </body>
 </html>
