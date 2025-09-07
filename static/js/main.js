@@ -16,7 +16,7 @@ async function initializeDB() {
     try {
       await dbManager.initDB();
       dbInitialized = true;
-      console.log("Database initialized successfully");
+      //console.log("Database initialized successfully");
     } catch (error) {
       console.error("Failed to initialize database:", error);
       throw error;
@@ -119,7 +119,7 @@ function saveAllFormStates() {
   };
 
   localStorage.setItem("formStates", JSON.stringify(formStates));
-  console.log("Saved form states:", formStates);
+  //console.log("Saved form states:", formStates);
 }
 
 // Function to load all form states from localStorage
@@ -375,10 +375,10 @@ function initializeDefaultFormStates() {
     };
 
     localStorage.setItem("formStates", JSON.stringify(defaultStates));
-    console.log(
-      "Initialized localStorage with default form states:",
-      defaultStates
-    );
+    //console.log(
+    //   "Initialized localStorage with default form states:",
+    //   defaultStates
+    // );
 
     // Set the default radio buttons in the DOM
     setDefaultRadioButtons();
@@ -434,14 +434,14 @@ document.addEventListener("DOMContentLoaded", async function () {
     try {
       await initializeCharts();
     } catch (error) {
-      console.log("Charts not available or failed to initialize:", error);
+      //console.log("Charts not available or failed to initialize:", error);
     }
 
     // Initialize pagination (only if summary table exists)
     try {
       paginationSummaryTable();
     } catch (error) {
-      console.log("Pagination not available or failed to initialize:", error);
+      //console.log("Pagination not available or failed to initialize:", error);
     }
 
     // Set date range display
@@ -619,10 +619,10 @@ function setupEventListeners() {
   // Setup report button handler
   const reportButton = document.getElementById("reportButton");
   if (reportButton) {
-    console.log("Setting up report button event listener");
+    //console.log("Setting up report button event listener");
     reportButton.addEventListener("click", downloadSectionPDF);
   } else {
-    console.log("Report button not found in DOM");
+    //console.log("Report button not found in DOM");
   }
 
   // Category type radio buttons
@@ -684,7 +684,7 @@ function setupEventListeners() {
   const form = document.querySelector("form.filter-form");
   if (form) {
     form.addEventListener("submit", async function (e) {
-      console.log("Form submitted");
+      //console.log("Form submitted");
 
       // Log selected authors
       const selectAllCheckbox = document.getElementById("selectAllAuthors");
@@ -701,8 +701,8 @@ function setupEventListeners() {
         });
       }
 
-      console.log("Selected authors:", selectedAuthors);
-      console.log("Total selected count:", selectedAuthors.length);
+      //console.log("Selected authors:", selectedAuthors);
+      //console.log("Total selected count:", selectedAuthors.length);
 
       try {
         // Handle custom input if present
@@ -760,10 +760,10 @@ function setupEventListeners() {
 }
 
 async function toggleAuthorSubtaskUI() {
-  console.log("Toggling Author Subtask UI");
+  //console.log("Toggling Author Subtask UI");
   const section = document.getElementById("author-task-container");
   const toggle = document.getElementById("showAuthorSubtaskUI");
-  console.log("Toggling Author Subtask UI", section);
+  //console.log("Toggling Author Subtask UI", section);
   if (section && toggle) {
     section.style.display = toggle.checked ? "block" : "none";
     // Save all form states to localStorage
@@ -772,7 +772,7 @@ async function toggleAuthorSubtaskUI() {
 }
 
 async function toggleCapacityUI() {
-  console.log("Toggling Capacity UI");
+  //console.log("Toggling Capacity UI");
   const section = document.getElementById("capacityTableSection");
   const toggle = document.getElementById("showCapacityUI");
 
@@ -985,7 +985,7 @@ function resetHolidays() {
 
 // --- Chart Logic ---
 function initializeCharts() {
-  console.log("Initializing initializeCharts...");
+  //console.log("Initializing initializeCharts...");
 
   if (
     serverData?.weeklyOvertimeData?.weeks &&
@@ -1372,7 +1372,7 @@ function paginationSummaryTable() {
   // Check if summary table exists first
   const summaryTable = document.getElementById("summary-table");
   if (!summaryTable) {
-    console.log("Summary table not found, skipping pagination setup");
+    //console.log("Summary table not found, skipping pagination setup");
     return;
   }
 
@@ -1384,7 +1384,7 @@ function paginationSummaryTable() {
 
   // If no rows, skip pagination
   if (totalRows === 0) {
-    console.log("No rows found in summary table, skipping pagination");
+    //console.log("No rows found in summary table, skipping pagination");
     return;
   }
 
@@ -1530,7 +1530,7 @@ function forceSectionNewPage(sectionId) {
 }
 
 async function downloadSectionPDF() {
-  console.log("Starting PDF generation...");
+  //console.log("Starting PDF generation...");
   try {
     const element = document.getElementById("reportSection");
 
@@ -1595,7 +1595,7 @@ async function downloadSectionPDF() {
     if (summarySortContainer) summarySortContainer.style.display = "none";
 
     if (savedStateOverTime === false) {
-      console.log("Hiding overtime section in PDF");
+      //console.log("Hiding overtime section in PDF");
       const overtimeSection = clone.querySelector("#overtimeSection");
       overtimeSection.style.display = "none";
     } else {
@@ -1679,7 +1679,7 @@ async function downloadSectionPDF() {
       hidden.forEach((el) => el.parentNode.removeChild(el));
 
       await html2pdf().set(opt).from(clone).save();
-      console.log("PDF generated successfully");
+      //console.log("PDF generated successfully");
     } catch (err) {
       console.error("Error in PDF generation:", err);
     } finally {
