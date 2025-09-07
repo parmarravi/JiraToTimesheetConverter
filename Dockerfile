@@ -17,4 +17,4 @@ COPY . .
 EXPOSE 8080
 
 # Run app
-CMD ["gunicorn", "-b", ":8080", "app:app"]
+CMD ["python3",  "app.py"]
