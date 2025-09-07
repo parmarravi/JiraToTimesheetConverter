@@ -1,5 +1,14 @@
 steps:
   - name: "gcr.io/cloud-builders/docker"
-    args: ["build", "-t", "gcr.io/$PROJECT_ID/jira-worklog-tool", "."]
+    args:
+      [
+        "build",
+        "-t",
+        "gcr.io/jira-worklog-tool-471319-r8/jira-worklog-tool",
+        ".",
+      ]
 images:
-  - "gcr.io/$PROJECT_ID/jira-worklog-tool"
+  - "gcr.io/jira-worklog-tool-471319-r8/jira-worklog-tool"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
