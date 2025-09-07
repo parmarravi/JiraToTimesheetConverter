@@ -17,4 +17,7 @@ COPY . .
 EXPOSE 8080
 
 # Run app
-CMD ["python3",  "app.py"]
+CMD ["gunicorn", "-b", ":8080", "app:app"]
+
+# Expose Cloud Run port
+EXPOSE 8080

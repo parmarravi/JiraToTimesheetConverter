@@ -1,6 +1,7 @@
 import socket
 import pandas as pd
 import json
+import os
 from io import BytesIO
 from flask import Flask, render_template, request, send_file, redirect, url_for, jsonify, session
 from datetime import datetime, timedelta
@@ -1766,4 +1767,5 @@ def download_report(report_type):
     # )
 
 if __name__ == "__main__":
-    app.run(debug=False, host='0.0.0.0', port=8080)
+    port = int(os.environ.get("PORT", 8080))  # Cloud Run sets $PORT
+    app.run(host="0.0.0.0", port=port)
